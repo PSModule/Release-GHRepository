@@ -11,11 +11,6 @@ updates:
       - dependencies
       - github-actions
     schedule:
-      interval: weekly
-  - package-ecosystem: nuget # See documentation for possible values
-    directory: / # Location of package manifests
-    labels:
-      - dependencies
-      - nuget
-    schedule:
-      interval: weekly
+      interval: daily
+    cooldown:
+      default-days: 7

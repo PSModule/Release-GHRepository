@@ -9,7 +9,7 @@ Release-GHRepository follows:
 
 - [SemVer 2.0.0 specifications](https://semver.org)
 - [GitHub Flow specifications](https://docs.github.com/en/get-started/using-github/github-flow)
-- [Continiuous Delivery practices](https://en.wikipedia.org/wiki/Continuous_delivery)
+- [Continuous Delivery practices](https://en.wikipedia.org/wiki/Continuous_delivery)
 
 ## How it works
 
@@ -39,7 +39,7 @@ The action can be configured using the following settings:
 
 | Name | Description | Default | Required |
 | --- | --- | --- | --- |
-| `AutoCleanup`| Control whether to automatically cleanup prereleases. If disabled, the action will not remove any prereleases. | `true` | false |
+| `AutoCleanup` | Control whether to automatically cleanup prereleases. If disabled, the action will not remove any prereleases. | `true` | false |
 | `AutoPatching` | Control whether to automatically handle patches. If disabled, the action will only create a patch release if the pull request has a 'patch' label. | `true` | false |
 | `ConfigurationFile` | The path to the configuration file. Settings in the configuration file take precedence over the action inputs. | `.github\auto-release.yml` | false |
 | `CreateMajorTag` | Control whether to create a tag for major releases. | `true` | false |

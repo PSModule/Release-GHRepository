@@ -94,7 +94,7 @@ runs:
   using: composite
   steps:
     - name: Release-GHRepository
-      uses: PSModule/GitHub-Script@v1
+      uses: PSModule/GitHub-Script@e827bea46d70eebc668bdd59e4654e0846177da4 # v1.7.9
       env:
         PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup: ${{ inputs.AutoCleanup }}
         PSMODULE_AUTO_RELEASE_INPUT_AutoPatching: ${{ inputs.AutoPatching }}
