@@ -39,7 +39,7 @@ The action can be configured using the following settings:
 
 | Name | Description | Default | Required |
 | --- | --- | --- | --- |
-| `AutoCleanup`| Control wether to automatically cleanup prereleases. If disabled, the action will not remove any prereleases. | `true` | false |
+| `AutoCleanup` | Control wether to automatically cleanup prereleases. If disabled, the action will not remove any prereleases. | `true` | false |
 | `AutoPatching` | Control wether to automatically handle patches. If disabled, the action will only create a patch release if the pull request has a 'patch' label. | `true` | false |
 | `ConfigurationFile` | The path to the configuration file. Settings in the configuration file take precedence over the action inputs. | `.github\auto-release.yml` | false |
 | `CreateMajorTag` | Control wether to create a tag for major releases. | `true` | false |
