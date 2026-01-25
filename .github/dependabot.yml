@@ -20,4 +20,6 @@ updates:
       - dependencies
       - nuget
     schedule:
-      interval: weekly
+      interval: daily
+    cooldown:
+      default-days: 7
