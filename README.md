@@ -26,7 +26,7 @@ The following labels will inform the action what kind of release to create:
   - `patch`
   - `fix`
 
-When a pull request is closed, the action will create a release based on the labels and clean up any previous prereleases that was created.
+When a pull request is closed, the action will create a release based on the labels and clean up any previous prereleases that were created.
 
 > [!NOTE]
 > The labels can be configured using the `MajorLabels`, `MinorLabels` and `PatchLabels` parameters/settings in the configuration file to trigger
@@ -65,7 +65,7 @@ The action can be configured using the following settings:
 
 The configuration file is a YAML file that can be used to configure the action.
 By default, the configuration file is expected at `.github\auto-release.yml`, which can be changed using the `ConfigurationFile` setting.
-The actions configuration can be change by altering the settings in the configuration file.
+The action's configuration can be changed by altering the settings in the configuration file.
 
 ```yaml
 DatePrereleaseFormat: 'yyyyMMddHHmm'
@@ -77,7 +77,7 @@ This example uses the date format for the prerelease, disables the incremental p
 
 ## Example
 
-Add a workflow in you repository using the following example:
+Add a workflow in your repository using the following example:
 
 ```yaml
 name: Release-GHRepository
