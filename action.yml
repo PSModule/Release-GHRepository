@@ -7,11 +7,11 @@ branding:
 
 inputs:
   AutoCleanup:
-    description: Control wether to automatically delete the prerelease tags after the stable release is created.
+    description: Control whether to automatically delete the prerelease tags after the stable release is created.
     required: false
     default: 'true'
   AutoPatching:
-    description: Control wether to automatically handle patches. If disabled, the action will only create a patch release if the pull request has a 'patch' label.
+    description: Control whether to automatically handle patches. If disabled, the action will only create a patch release if the pull request has a 'patch' label.
     required: false
     default: 'true'
   ConfigurationFile:
@@ -19,11 +19,11 @@ inputs:
     required: false
     default: .github\auto-release.yml
   CreateMajorTag:
-    description: Control wether to create a major tag when a pull request is merged into the main branch.
+    description: Control whether to create a major tag when a pull request is merged into the main branch.
     required: false
     default: 'true'
   CreateMinorTag:
-    description: Control wether to create a minor tag when a pull request is merged into the main branch.
+    description: Control whether to create a minor tag when a pull request is merged into the main branch.
     required: false
     default: 'true'
   DatePrereleaseFormat:
@@ -35,7 +35,7 @@ inputs:
     required: false
     default: NoRelease
   IncrementalPrerelease:
-    description: Control wether to automatically increment the prerelease number. If disabled, the action will ensure only one prerelease exists for a given branch.
+    description: Control whether to automatically increment the prerelease number. If disabled, the action will ensure only one prerelease exists for a given branch.
     required: false
     default: 'true'
   MajorLabels:

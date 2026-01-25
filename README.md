@@ -9,7 +9,7 @@ Auto-Release follows:
 
 - [SemVer 2.0.0 specifications](https://semver.org)
 - [GitHub Flow specifications](https://docs.github.com/en/get-started/using-github/github-flow)
-- [Continiuous Delivery practices](https://en.wikipedia.org/wiki/Continuous_delivery)
+- [Continuous Delivery practices](https://en.wikipedia.org/wiki/Continuous_delivery)
 
 ## How it works
 
@@ -39,14 +39,14 @@ The action can be configured using the following settings:
 
 | Name | Description | Default | Required |
 | --- | --- | --- | --- |
-| `AutoCleanup` | Control wether to automatically cleanup prereleases. If disabled, the action will not remove any prereleases. | `true` | false |
-| `AutoPatching` | Control wether to automatically handle patches. If disabled, the action will only create a patch release if the pull request has a 'patch' label. | `true` | false |
+| `AutoCleanup` | Control whether to automatically cleanup prereleases. If disabled, the action will not remove any prereleases. | `true` | false |
+| `AutoPatching` | Control whether to automatically handle patches. If disabled, the action will only create a patch release if the pull request has a 'patch' label. | `true` | false |
 | `ConfigurationFile` | The path to the configuration file. Settings in the configuration file take precedence over the action inputs. | `.github\auto-release.yml` | false |
-| `CreateMajorTag` | Control wether to create a tag for major releases. | `true` | false |
-| `CreateMinorTag` | Control wether to create a tag for minor releases. | `true` | false |
+| `CreateMajorTag` | Control whether to create a tag for major releases. | `true` | false |
+| `CreateMinorTag` | Control whether to create a tag for minor releases. | `true` | false |
 | `DatePrereleaseFormat` | The format to use for the prerelease number using [.NET DateTime format strings](https://learn.microsoft.com/en-us/dotnet/standard/base-types/standard-date-and-time-format-strings). | `''` | false |
 | `IgnoreLabels` | A comma separated list of labels that do not trigger a release. | `NoRelease` | false |
-| `IncrementalPrerelease` | Control wether to automatically increment the prerelease number. If disabled, the action will ensure only one prerelease exists for a given branch. | `true` | false |
+| `IncrementalPrerelease` | Control whether to automatically increment the prerelease number. If disabled, the action will ensure only one prerelease exists for a given branch. | `true` | false |
 | `MajorLabels` | A comma separated list of labels that trigger a major release. | `major, breaking` | false |
 | `MinorLabels` | A comma separated list of labels that trigger a minor release. | `minor, feature` | false |
 | `PatchLabels` | A comma separated list of labels that trigger a patch release. | `patch, fix` | false |
@@ -54,7 +54,7 @@ The action can be configured using the following settings:
 | `UsePRBodyAsReleaseNotes` | When enabled, uses the pull request body as the release notes for the GitHub release. | `true` | false |
 | `UsePRTitleAsNotesHeading` | When enabled, the release notes will begin with the pull request title as a H1 heading followed by the pull request body. The title will include a reference to the PR number. | `true` | false |
 | `VersionPrefix` | The prefix to use for the version number. | `v` | false |
-| `WhatIf` | Control wether to simulate the action. If enabled, the action will not create any releases. Used for testing. | `false` | false |
+| `WhatIf` | Control whether to simulate the action. If enabled, the action will not create any releases. Used for testing. | `false` | false |
 | `Debug` | Enable debug output. | `'false'` | false |
 | `Verbose` | Enable verbose output. | `'false'` | false |
 | `Version` | Specifies the exact version of the GitHub module to install. | | false |
