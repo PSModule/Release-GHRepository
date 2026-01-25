@@ -1,4 +1,4 @@
-name: Auto Release (by PSModule)
+name: Release GHRepository (by PSModule)
 description: Automatically creates releases based on pull requests and labels.
 author: PSModule
 branding:
@@ -93,7 +93,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Auto-Release
+    - name: Release-GHRepository
       uses: PSModule/GitHub-Script@v1
       env:
         PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup: ${{ inputs.AutoCleanup }}
@@ -117,8 +117,8 @@ runs:
         Prerelease: ${{ inputs.Prerelease }}
         Verbose: ${{ inputs.Verbose }}
         Version: ${{ inputs.Version }}
-        Name: Auto-Release
+        Name: Release-GHRepository
         WorkingDirectory: ${{ inputs.WorkingDirectory }}
         Script: |
-          # Auto-Release
+          # Release-GHRepository
           ${{ github.action_path }}/scripts/main.ps1

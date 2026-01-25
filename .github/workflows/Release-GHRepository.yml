@@ -1,6 +1,6 @@
-name: Auto-Release
+name: Release-GHRepository
 
-run-name: "Auto-Release - [${{ github.event.pull_request.title }} #${{ github.event.pull_request.number }}] by @${{ github.actor }}"
+run-name: "Release-GHRepository - [${{ github.event.pull_request.title }} #${{ github.event.pull_request.number }}] by @${{ github.actor }}"
 
 on:
   pull_request_target:
@@ -22,7 +22,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  Auto-Release:
+  Release-GHRepository:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -30,7 +30,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Auto-Release
+      - name: Release-GHRepository
         uses: ./
         with:
           IncrementalPrerelease: false

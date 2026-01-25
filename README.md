@@ -1,11 +1,11 @@
-# Auto-Release
+# Release-GHRepository
 
 Automatically creates releases based on pull requests and labels.
 
 
 ## Specifications and practices
 
-Auto-Release follows:
+Release-GHRepository follows:
 
 - [SemVer 2.0.0 specifications](https://semver.org)
 - [GitHub Flow specifications](https://docs.github.com/en/get-started/using-github/github-flow)
@@ -80,7 +80,7 @@ This example uses the date format for the prerelease, disables the incremental p
 Add a workflow in you repository using the following example:
 
 ```yaml
-name: Auto-Release
+name: Release-GHRepository
 
 on:
   pull_request_target:
@@ -97,14 +97,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
-  Auto-Release:
+  Release-GHRepository:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Auto-Release
-        uses: PSModule/Auto-Release@v1
+      - name: Release-GHRepository
+        uses: PSModule/Release-GHRepository@v1
 ```
 
 ## Permissions
