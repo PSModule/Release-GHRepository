@@ -1,6 +1,6 @@
-name: Release-GHRepository
+name: Release
 
-run-name: "Release-GHRepository - [${{ github.event.pull_request.title }} #${{ github.event.pull_request.number }}] by @${{ github.actor }}"
+run-name: "Release - [${{ github.event.pull_request.title }} #${{ github.event.pull_request.number }}] by @${{ github.actor }}"
 
 on:
   pull_request:
@@ -12,6 +12,9 @@ on:
       - reopened
       - synchronize
       - labeled
+    paths:
+      - 'action.yml'
+      - 'src/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -22,7 +25,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  Release-GHRepository:
+  Release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -30,7 +33,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Release-GHRepository
+      - name: Release
         uses: ./
         with:
           IncrementalPrerelease: false
