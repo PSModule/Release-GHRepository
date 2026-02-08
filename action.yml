@@ -50,6 +50,10 @@ inputs:
     description: A comma separated list of labels that trigger a patch release.
     required: false
     default: patch, fix
+  ReleaseFiles:
+    description: A comma separated list of file patterns (glob) that warrant a new release when changed. If specified and a pull request does not change any matching files, the release will be skipped.
+    required: false
+    default: ''
   UsePRTitleAsReleaseName:
     description: When enabled, uses the pull request title as the name for the GitHub release.
     required: false
@@ -107,6 +111,7 @@ runs:
         PSMODULE_AUTO_RELEASE_INPUT_MajorLabels: ${{ inputs.MajorLabels }}
         PSMODULE_AUTO_RELEASE_INPUT_MinorLabels: ${{ inputs.MinorLabels }}
         PSMODULE_AUTO_RELEASE_INPUT_PatchLabels: ${{ inputs.PatchLabels }}
+        PSMODULE_AUTO_RELEASE_INPUT_ReleaseFiles: ${{ inputs.ReleaseFiles }}
         PSMODULE_AUTO_RELEASE_INPUT_UsePRBodyAsReleaseNotes: ${{ inputs.UsePRBodyAsReleaseNotes }}
         PSMODULE_AUTO_RELEASE_INPUT_UsePRTitleAsReleaseName: ${{ inputs.UsePRTitleAsReleaseName }}
         PSMODULE_AUTO_RELEASE_INPUT_UsePRTitleAsNotesHeading: ${{ inputs.UsePRTitleAsNotesHeading }}

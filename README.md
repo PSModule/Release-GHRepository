@@ -50,6 +50,7 @@ The action can be configured using the following settings:
 | `MajorLabels` | A comma separated list of labels that trigger a major release. | `major, breaking` | false |
 | `MinorLabels` | A comma separated list of labels that trigger a minor release. | `minor, feature` | false |
 | `PatchLabels` | A comma separated list of labels that trigger a patch release. | `patch, fix` | false |
+| `ReleaseFiles` | A comma separated list of file patterns (glob) that warrant a new release when changed. If specified and a pull request does not change any matching files, the release will be skipped. | `''` | false |
 | `UsePRTitleAsReleaseName` | When enabled, uses the pull request title as the name for the GitHub release. | `false` | false |
 | `UsePRBodyAsReleaseNotes` | When enabled, uses the pull request body as the release notes for the GitHub release. | `true` | false |
 | `UsePRTitleAsNotesHeading` | When enabled, the release notes will begin with the pull request title as a H1 heading followed by the pull request body. The title will include a reference to the PR number. | `true` | false |
@@ -70,10 +71,11 @@ The action's configuration can be changed by altering the settings in the config
 ```yaml
 DatePrereleaseFormat: 'yyyyMMddHHmm'
 IncrementalPrerelease: false
+ReleaseFiles: 'action.yml, src/**'
 VersionPrefix: ''
 ```
 
-This example uses the date format for the prerelease, disables the incremental prerelease and removes the version prefix.
+This example uses the date format for the prerelease, disables the incremental prerelease, only triggers releases for changes to `action.yml` and files under `src/`, and removes the version prefix.
 
 ## Example
 

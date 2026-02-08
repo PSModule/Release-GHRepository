@@ -56,6 +56,12 @@ LogGroup 'Set configuration' {
     $minorLabels = (![string]::IsNullOrEmpty($configuration.MinorLabels) ? $configuration.MinorLabels : $env:PSMODULE_AUTO_RELEASE_INPUT_MinorLabels) -split ',' | ForEach-Object { $_.Trim() }
     $patchLabels = (![string]::IsNullOrEmpty($configuration.PatchLabels) ? $configuration.PatchLabels : $env:PSMODULE_AUTO_RELEASE_INPUT_PatchLabels) -split ',' | ForEach-Object { $_.Trim() }
 
+    $releaseFilesRaw = ![string]::IsNullOrEmpty($configuration.ReleaseFiles) ? $configuration.ReleaseFiles : $env:PSMODULE_AUTO_RELEASE_INPUT_ReleaseFiles
+    $releaseFiles = @()
+    if (![string]::IsNullOrEmpty($releaseFilesRaw)) {
+        $releaseFiles = $releaseFilesRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+    }
+
     Write-Output '-------------------------------------------------'
     Write-Output "Auto cleanup enabled:           [$autoCleanup]"
     Write-Output "Auto patching enabled:          [$autoPatching]"
@@ -73,6 +79,7 @@ LogGroup 'Set configuration' {
     Write-Output "Major labels:                   [$($majorLabels -join ', ')]"
     Write-Output "Minor labels:                   [$($minorLabels -join ', ')]"
     Write-Output "Patch labels:                   [$($patchLabels -join ', ')]"
+    Write-Output "Release files:                  [$($releaseFiles -join ', ')]"
     Write-Output '-------------------------------------------------'
 }
 
@@ -134,6 +141,39 @@ $ignoreRelease = ($labels | Where-Object { $ignoreLabels -contains $_ }).Count -
 if ($ignoreRelease) {
     Write-Output 'Ignoring release creation.'
     return
+}
+
+if ($releaseFiles.Count -gt 0) {
+    LogGroup 'Check changed files against release file patterns' {
+        $prNumber = $pull_request.number
+        $changedFiles = gh pr diff $prNumber --name-only | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to get changed files for PR #$prNumber."
+            exit $LASTEXITCODE
+        }
+        Write-Output "Changed files in PR #$($prNumber):"
+        $changedFiles | ForEach-Object { Write-Output "  - $_" }
+        Write-Output ''
+        Write-Output "Release file patterns:"
+        $releaseFiles | ForEach-Object { Write-Output "  - $_" }
+
+        $hasReleaseFileChanges = $false
+        :fileLoop foreach ($file in $changedFiles) {
+            foreach ($pattern in $releaseFiles) {
+                if ($file -like $pattern) {
+                    Write-Output "Match: [$file] matches pattern [$pattern]"
+                    $hasReleaseFileChanges = $true
+                    break fileLoop
+                }
+            }
+        }
+
+        if (-not $hasReleaseFileChanges) {
+            Write-Output 'No changed files match the configured release file patterns. Skipping release creation.'
+            return
+        }
+        Write-Output 'Changed files match release file patterns. Proceeding with release.'
+    }
 }
 
 $majorRelease = ($labels | Where-Object { $majorLabels -contains $_ }).Count -gt 0
