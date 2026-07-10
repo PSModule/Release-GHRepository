@@ -79,7 +79,7 @@ inputs:
     required: false
     default: 'false'
   Version:
-    description: Specifies the version of the GitHub module to be installed. The value must be an exact version.
+    description: Specifies the version of the GitHub module to be installed. Accepts an exact version or a NuGet version range (for example '[1.2.0, 2.0.0)').
     required: false
   Prerelease:
     description: Allow prerelease versions if available.

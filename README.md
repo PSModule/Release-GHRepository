@@ -57,7 +57,7 @@ The action can be configured using the following settings:
 | `WhatIf` | Control whether to simulate the action. If enabled, the action will not create any releases. Used for testing. | `false` | false |
 | `Debug` | Enable debug output. | `'false'` | false |
 | `Verbose` | Enable verbose output. | `'false'` | false |
-| `Version` | Specifies the exact version of the GitHub module to install. | | false |
+| `Version` | Specifies the version of the GitHub module to install. Accepts an exact version or a NuGet version range (for example `[1.2.0, 2.0.0)`). | | false |
 | `Prerelease` | Allow prerelease versions if available. | `'false'` | false |
 | `WorkingDirectory` | The working directory where the script runs. | `${{ github.workspace }}` | false |
 
