@@ -8,6 +8,11 @@
 [CmdletBinding()]
 param()
 
+$ErrorActionPreference = 'Stop'
+
+$helperModulePath = Join-Path -Path $PSScriptRoot -ChildPath 'Release-GHRepository.Helpers.psm1'
+Import-Module -Name $helperModulePath -Force
+
 LogGroup 'Loading libraries' {
     'powershell-yaml', 'PSSemVer' | ForEach-Object {
         $name = $_
@@ -40,7 +45,6 @@ LogGroup 'Set configuration' {
     }
 
     $autoCleanup = ![string]::IsNullOrEmpty($configuration.AutoCleanup) ? $configuration.AutoCleanup -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup -eq 'true'
-    $autoPatching = ![string]::IsNullOrEmpty($configuration.AutoPatching) ? $configuration.AutoPatching -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_AutoPatching -eq 'true'
     $createMajorTag = ![string]::IsNullOrEmpty($configuration.CreateMajorTag) ? $configuration.CreateMajorTag -EQ 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_CreateMajorTag -EQ 'true'
     $createMinorTag = ![string]::IsNullOrEmpty($configuration.CreateMinorTag) ? $configuration.CreateMinorTag -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_CreateMinorTag -eq 'true'
     $datePrereleaseFormat = ![string]::IsNullOrEmpty($configuration.DatePrereleaseFormat) ? $configuration.DatePrereleaseFormat : $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat
@@ -51,14 +55,8 @@ LogGroup 'Set configuration' {
     $versionPrefix = ![string]::IsNullOrEmpty($configuration.VersionPrefix) ? $configuration.VersionPrefix : $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix
     $whatIf = ![string]::IsNullOrEmpty($configuration.WhatIf) ? $configuration.WhatIf -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf -eq 'true'
 
-    $ignoreLabels = (![string]::IsNullOrEmpty($configuration.IgnoreLabels) ? $configuration.IgnoreLabels : $env:PSMODULE_AUTO_RELEASE_INPUT_IgnoreLabels) -split ',' | ForEach-Object { $_.Trim() }
-    $majorLabels = (![string]::IsNullOrEmpty($configuration.MajorLabels) ? $configuration.MajorLabels : $env:PSMODULE_AUTO_RELEASE_INPUT_MajorLabels) -split ',' | ForEach-Object { $_.Trim() }
-    $minorLabels = (![string]::IsNullOrEmpty($configuration.MinorLabels) ? $configuration.MinorLabels : $env:PSMODULE_AUTO_RELEASE_INPUT_MinorLabels) -split ',' | ForEach-Object { $_.Trim() }
-    $patchLabels = (![string]::IsNullOrEmpty($configuration.PatchLabels) ? $configuration.PatchLabels : $env:PSMODULE_AUTO_RELEASE_INPUT_PatchLabels) -split ',' | ForEach-Object { $_.Trim() }
-
     Write-Output '-------------------------------------------------'
     Write-Output "Auto cleanup enabled:           [$autoCleanup]"
-    Write-Output "Auto patching enabled:          [$autoPatching]"
     Write-Output "Create major tag enabled:       [$createMajorTag]"
     Write-Output "Create minor tag enabled:       [$createMinorTag]"
     Write-Output "Date-based prerelease format:   [$datePrereleaseFormat]"
@@ -68,12 +66,32 @@ LogGroup 'Set configuration' {
     Write-Output "Use PR title as notes heading:  [$usePRTitleAsNotesHeading]"
     Write-Output "Version prefix:                 [$versionPrefix]"
     Write-Output "What if mode:                   [$whatIf]"
-    Write-Output ''
-    Write-Output "Ignore labels:                  [$($ignoreLabels -join ', ')]"
-    Write-Output "Major labels:                   [$($majorLabels -join ', ')]"
-    Write-Output "Minor labels:                   [$($minorLabels -join ', ')]"
-    Write-Output "Patch labels:                   [$($patchLabels -join ', ')]"
     Write-Output '-------------------------------------------------'
+}
+
+LogGroup 'Provision release labels' {
+    if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) {
+        throw 'GITHUB_REPOSITORY is required to provision release labels.'
+    }
+
+    foreach ($definition in Get-ReleaseLabelDefinition) {
+        $arguments = @(
+            'label'
+            'create'
+            $definition.Name
+            '--repo'
+            $env:GITHUB_REPOSITORY
+            '--color'
+            $definition.Color
+            '--description'
+            $definition.Description
+            '--force'
+        )
+        gh @arguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to provision the canonical label [$($definition.Name)]."
+        }
+    }
 }
 
 LogGroup 'Event information - JSON' {
@@ -125,22 +143,19 @@ LogGroup 'Pull request - Labels' {
     $labels | Format-List | Out-String
 }
 
-$createRelease = $isMerged -and $targetIsDefaultBranch
+$releaseDecision = Resolve-ReleaseDecision -Labels $labels
+
+$createRelease = $isMerged -and $targetIsDefaultBranch -and -not $releaseDecision.Skip
 $closedPullRequest = $prIsClosed -and -not $isMerged
-$createPrerelease = $labels -Contains 'prerelease' -and -not $createRelease -and -not $closedPullRequest
+$createPrerelease = $releaseDecision.Prerelease -and -not $createRelease -and -not $closedPullRequest
 $prereleaseName = $prHeadRef -replace '[^a-zA-Z0-9]'
 
-$ignoreRelease = ($labels | Where-Object { $ignoreLabels -contains $_ }).Count -gt 0
-if ($ignoreRelease) {
-    Write-Output 'Ignoring release creation.'
-    return
-}
-
-$majorRelease = ($labels | Where-Object { $majorLabels -contains $_ }).Count -gt 0
-$minorRelease = ($labels | Where-Object { $minorLabels -contains $_ }).Count -gt 0 -and -not $majorRelease
-$patchRelease = (($labels | Where-Object { $patchLabels -contains $_ }).Count -gt 0 -or $autoPatching) -and -not $majorRelease -and -not $minorRelease
+$majorRelease = $releaseDecision.Bump -eq 'Major'
+$minorRelease = $releaseDecision.Bump -eq 'Minor'
+$patchRelease = $releaseDecision.Bump -eq 'Patch'
 
 Write-Output '-------------------------------------------------'
+Write-Output "Skip release:                   [$($releaseDecision.Skip)]"
 Write-Output "Create a release:               [$createRelease]"
 Write-Output "Create a prerelease:            [$createPrerelease]"
 Write-Output "Create a major release:         [$majorRelease]"
@@ -175,7 +190,7 @@ Write-Output '-------------------------------------------------'
 Write-Output "Latest version:                 [$latestVersion]"
 Write-Output '-------------------------------------------------'
 
-if ($createPrerelease -or $createRelease -or $whatIf) {
+if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $whatIf)) {
     LogGroup 'Calculate new version' {
         $latestVersion = New-PSSemVer -Version $latestVersion
         $newVersion = New-PSSemVer -Version $latestVersion
@@ -369,7 +384,7 @@ LogGroup 'List prereleases using the same name' {
     $prereleasesToCleanup | Select-Object -Property name, publishedAt, isPrerelease, isLatest | Format-Table | Out-String
 }
 
-if ((($closedPullRequest -or $createRelease) -and $autoCleanup) -or $whatIf) {
+if (($prIsClosed -and $autoCleanup) -or $whatIf) {
     LogGroup "Cleanup prereleases for [$prereleaseName]" {
         foreach ($rel in $prereleasesToCleanup) {
             $relTagName = $rel.tagName
