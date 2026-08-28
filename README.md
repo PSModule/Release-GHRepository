@@ -115,8 +115,10 @@ VersionPrefix: ''
 1. Add `issues: write` to the release job and subscribe the workflow to `unlabeled`.
 2. Remove workflow path filters so `release:skip` decisions are validated.
 3. Remove `AutoPatching`, `IgnoreLabels`, `MajorLabels`, `MinorLabels`, and `PatchLabels` from action inputs and configuration files.
-4. Apply one canonical decision to every open pull request.
-5. Update the action reference to `PSModule/Release-GHRepository@v3` after `v3.0.0` is published.
-6. Remove legacy release labels after no open pull request uses them. Removing bare `major`, `minor`, and `patch` labels also prevents Dependabot from applying them as dependency-version metadata.
+4. Provision the five canonical labels before opening the migration pull request. The action reconciles them on every subsequent run.
+5. Apply both the existing v2 decision and the equivalent canonical decision to the migration pull request so either workflow version can process it.
+6. Update the action reference to `PSModule/Release-GHRepository@v3` after `v3.0.0` is published.
+7. Apply one canonical decision to every other open pull request.
+8. Remove legacy release labels after no open pull request uses them. Removing bare `major`, `minor`, and `patch` labels also prevents Dependabot from applying them as dependency-version metadata.
 
 The first v3 run provisions the canonical labels before validating the pull request. A pull request without a canonical decision fails until a maintainer applies one.

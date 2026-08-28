@@ -181,4 +181,42 @@ Describe 'Resolve-ReleaseDecision' {
     ) {
         { Resolve-ReleaseDecision -Labels $Labels } | Should -Throw $Message
     }
+
+    It 'accepts exactly the seven valid subsets of owned release labels' {
+        $ownedLabels = @(
+            'release:patch'
+            'release:minor'
+            'release:major'
+            'release:pre-release'
+            'release:skip'
+        )
+        $validSubsets = @(
+            'release:patch'
+            'release:minor'
+            'release:major'
+            'release:patch,release:pre-release'
+            'release:minor,release:pre-release'
+            'release:major,release:pre-release'
+            'release:skip'
+        )
+
+        for ($mask = 0; $mask -lt (1 -shl $ownedLabels.Count); $mask++) {
+            $labels = @(
+                for ($index = 0; $index -lt $ownedLabels.Count; $index++) {
+                    if (($mask -band (1 -shl $index)) -ne 0) {
+                        $ownedLabels[$index]
+                    }
+                }
+            )
+            $subset = ($labels | Sort-Object) -join ','
+
+            if ($validSubsets -ccontains $subset) {
+                { Resolve-ReleaseDecision -Labels $labels } |
+                    Should -Not -Throw -Because "[$subset] is a valid release decision"
+            } else {
+                { Resolve-ReleaseDecision -Labels $labels } |
+                    Should -Throw -Because "[$subset] is not a valid release decision"
+            }
+        }
+    }
 }
