@@ -87,9 +87,13 @@ LogGroup 'Provision release labels' {
             $definition.Description
             '--force'
         )
-        gh @arguments
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to provision the canonical label [$($definition.Name)]."
+        if ($whatIf) {
+            Write-Output "WhatIf: gh $($arguments -join ' ')"
+        } else {
+            gh @arguments
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to provision the canonical label [$($definition.Name)]."
+            }
         }
     }
 }

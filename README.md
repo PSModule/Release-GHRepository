@@ -27,7 +27,7 @@ Labels outside this set do not affect releases. Bare and legacy labels such as `
 
 ## How it works
 
-On every run, the action creates missing canonical labels and reconciles their colors and descriptions. It leaves all other repository labels unchanged.
+On every non-WhatIf run, the action creates missing canonical labels and reconciles their colors and descriptions. It leaves all other repository labels unchanged.
 
 An open pull request with `release:pre-release` and one bump label publishes a prerelease. A pull request merged into the default branch with one bump label publishes the stable release. A closed pull request cleans up its prereleases when `AutoCleanup` is enabled. `release:skip` never publishes a version, but a closed skipped pull request still receives prerelease cleanup.
 
@@ -89,7 +89,7 @@ The `pull_request_target` workflow checks out the trusted base branch. Do not ch
 | `UsePRBodyAsReleaseNotes` | Use the pull-request body as release notes. | `true` | false |
 | `UsePRTitleAsNotesHeading` | Add the pull-request title and number as the release-notes heading. | `true` | false |
 | `VersionPrefix` | Prefix the version number. | `v` | false |
-| `WhatIf` | Log release changes without creating or deleting releases or tags. | `false` | false |
+| `WhatIf` | Log release and label changes without mutating repository state. | `false` | false |
 | `Debug` | Enable debug output. | `false` | false |
 | `Verbose` | Enable verbose output. | `false` | false |
 | `Version` | Select the GitHub module dependency by exact version or NuGet version range. | | false |
