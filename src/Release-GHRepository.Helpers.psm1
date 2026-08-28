@@ -150,4 +150,50 @@ function Resolve-ReleaseDecision {
     }
 }
 
-Export-ModuleMember -Function Get-ReleaseLabelDefinition, Resolve-ReleaseDecision
+function Test-PrereleaseCreation {
+    <#
+        .SYNOPSIS
+        Test whether the current pull-request event may create a prerelease.
+
+        .DESCRIPTION
+        Return true only when a validated release decision requests a prerelease
+        and the pull request remains open.
+
+        .EXAMPLE
+        $decision = Resolve-ReleaseDecision -Labels @('release:patch', 'release:pre-release')
+        Test-PrereleaseCreation -ReleaseDecision $decision
+
+        Return true for an open pull request carrying a valid prerelease decision.
+
+        .EXAMPLE
+        $decision = Resolve-ReleaseDecision -Labels @('release:patch', 'release:pre-release')
+        Test-PrereleaseCreation -ReleaseDecision $decision -PullRequestClosed
+
+        Return false after the pull request closes.
+
+        .INPUTS
+        None
+
+        You can't pipe objects to Test-PrereleaseCreation.
+
+        .OUTPUTS
+        System.Boolean
+
+        Whether the event may create a prerelease.
+    #>
+    [OutputType([bool])]
+    [CmdletBinding()]
+    param(
+        # The validated canonical release decision.
+        [Parameter(Mandatory)]
+        [PSCustomObject] $ReleaseDecision,
+
+        # Indicate that the pull request is closed, whether merged or abandoned.
+        [Parameter()]
+        [switch] $PullRequestClosed
+    )
+
+    $ReleaseDecision.Prerelease -and -not $ReleaseDecision.Skip -and -not $PullRequestClosed
+}
+
+Export-ModuleMember -Function Get-ReleaseLabelDefinition, Resolve-ReleaseDecision, Test-PrereleaseCreation

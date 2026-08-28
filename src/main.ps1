@@ -151,7 +151,7 @@ $releaseDecision = Resolve-ReleaseDecision -Labels $labels
 
 $createRelease = $isMerged -and $targetIsDefaultBranch -and -not $releaseDecision.Skip
 $closedPullRequest = $prIsClosed -and -not $isMerged
-$createPrerelease = $releaseDecision.Prerelease -and -not $createRelease -and -not $closedPullRequest
+$createPrerelease = Test-PrereleaseCreation -ReleaseDecision $releaseDecision -PullRequestClosed:$prIsClosed
 $prereleaseName = $prHeadRef -replace '[^a-zA-Z0-9]'
 
 $majorRelease = $releaseDecision.Bump -eq 'Major'

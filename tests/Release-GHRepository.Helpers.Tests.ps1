@@ -219,4 +219,44 @@ Describe 'Resolve-ReleaseDecision' {
             }
         }
     }
+
+    Describe 'Test-PrereleaseCreation' {
+        It 'returns <Expected> for <Name>' -ForEach @(
+            @{
+                Name     = 'an open prerelease pull request'
+                Labels   = @('release:patch', 'release:pre-release')
+                Closed   = $false
+                Expected = $true
+            }
+            @{
+                Name     = 'a closed prerelease pull request'
+                Labels   = @('release:patch', 'release:pre-release')
+                Closed   = $true
+                Expected = $false
+            }
+            @{
+                Name     = 'an open stable pull request'
+                Labels   = @('release:patch')
+                Closed   = $false
+                Expected = $false
+            }
+            @{
+                Name     = 'a closed stable pull request'
+                Labels   = @('release:patch')
+                Closed   = $true
+                Expected = $false
+            }
+            @{
+                Name     = 'an open skipped pull request'
+                Labels   = @('release:skip')
+                Closed   = $false
+                Expected = $false
+            }
+        ) {
+            $decision = Resolve-ReleaseDecision -Labels $Labels
+            $result = Test-PrereleaseCreation -ReleaseDecision $decision -PullRequestClosed:$Closed
+
+            $result | Should -Be $Expected
+        }
+    }
 }
