@@ -12,9 +12,7 @@ on:
       - reopened
       - synchronize
       - labeled
-    paths:
-      - 'action.yml'
-      - 'src/**'
+      - unlabeled
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -22,6 +20,7 @@ concurrency:
 
 permissions:
   contents: write # Required to create releases
+  issues: write # Required to provision release labels
   pull-requests: write # Required to create comments on the PRs
 
 jobs:
