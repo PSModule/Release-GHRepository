@@ -55,15 +55,62 @@ function Get-ReleaseLabelDefinition {
     }
 }
 
+function ConvertTo-ReleaseBump {
+    <#
+        .SYNOPSIS
+        Convert a configured default bump into the internal release-bump value.
+
+        .DESCRIPTION
+        Validate DefaultBump with case-sensitive matching and return the
+        corresponding internal Patch, Minor, or Major value.
+
+        .EXAMPLE
+        ConvertTo-ReleaseBump -DefaultBump 'minor'
+
+        Return Minor.
+
+        .INPUTS
+        None
+
+        You can't pipe objects to ConvertTo-ReleaseBump.
+
+        .OUTPUTS
+        System.String
+
+        The validated internal release-bump value.
+    #>
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        # The fallback bump used when no explicit release bump or skip label exists.
+        [Parameter()]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string] $DefaultBump = 'patch'
+    )
+
+    $validDefaultBumps = @('patch', 'minor', 'major')
+    if ($validDefaultBumps -cnotcontains $DefaultBump) {
+        throw "Invalid DefaultBump [$DefaultBump]. Use exactly one of: patch, minor, major."
+    }
+
+    switch -CaseSensitive ($DefaultBump) {
+        'patch' { 'Patch' }
+        'minor' { 'Minor' }
+        'major' { 'Major' }
+    }
+}
+
 function Resolve-ReleaseDecision {
     <#
         .SYNOPSIS
         Resolve a release decision from canonical pull-request labels.
 
         .DESCRIPTION
-        Evaluate only the five labels owned by Release-GHRepository. Return one
-        explicit bump or skip decision and reject missing or conflicting owned-label
-        combinations without applying a default.
+        Evaluate only the five labels owned by Release-GHRepository. An explicit
+        bump label overrides DefaultBump, release:pre-release selects prerelease
+        mode, and release:skip suppresses publication. Reject conflicting owned-label
+        combinations.
 
         .EXAMPLE
         Resolve-ReleaseDecision -Labels @('release:minor')
@@ -74,6 +121,11 @@ function Resolve-ReleaseDecision {
         Resolve-ReleaseDecision -Labels @('release:patch', 'release:pre-release')
 
         Return a Patch prerelease decision.
+
+        .EXAMPLE
+        Resolve-ReleaseDecision -Labels @() -DefaultBump 'minor'
+
+        Return a Minor stable-release decision from the configured default.
 
         .INPUTS
         None
@@ -92,9 +144,16 @@ function Resolve-ReleaseDecision {
         [Parameter(Mandatory)]
         [AllowEmptyCollection()]
         [AllowNull()]
-        [string[]] $Labels
+        [string[]] $Labels,
+
+        # The fallback bump used when no explicit release bump or skip label exists.
+        [Parameter()]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string] $DefaultBump = 'patch'
     )
 
+    $resolvedDefaultBump = ConvertTo-ReleaseBump -DefaultBump $DefaultBump
     $bumpLabelTypes = [ordered]@{
         'release:patch' = 'Patch'
         'release:minor' = 'Minor'
@@ -121,32 +180,30 @@ function Resolve-ReleaseDecision {
         }
 
         [PSCustomObject]@{
-            Bump       = 'None'
-            Prerelease = $false
-            Skip       = $true
+            Bump               = 'None'
+            Prerelease         = $false
+            Skip               = $true
+            DefaultBumpApplied = $false
         }
         return
-    }
-
-    if ($bumpLabels.Count -eq 0) {
-        if ($hasPrerelease) {
-            throw 'Invalid release labels: release:pre-release requires exactly one release bump label.'
-        }
-
-        throw (
-            'Release decision is missing. Apply exactly one of release:patch, release:minor, ' +
-            'release:major, or release:skip.'
-        )
     }
 
     if ($bumpLabels.Count -gt 1) {
         throw "Conflicting release bump labels: [$($bumpLabels -join ', ')]. Apply exactly one bump label."
     }
 
+    $defaultBumpApplied = $bumpLabels.Count -eq 0
+    $bump = if ($defaultBumpApplied) {
+        $resolvedDefaultBump
+    } else {
+        $bumpLabelTypes[$bumpLabels[0]]
+    }
+
     [PSCustomObject]@{
-        Bump       = $bumpLabelTypes[$bumpLabels[0]]
-        Prerelease = $hasPrerelease
-        Skip       = $false
+        Bump               = $bump
+        Prerelease         = $hasPrerelease
+        Skip               = $false
+        DefaultBumpApplied = $defaultBumpApplied
     }
 }
 
@@ -196,4 +253,9 @@ function Test-PrereleaseCreation {
     $ReleaseDecision.Prerelease -and -not $ReleaseDecision.Skip -and -not $PullRequestClosed
 }
 
-Export-ModuleMember -Function Get-ReleaseLabelDefinition, Resolve-ReleaseDecision, Test-PrereleaseCreation
+Export-ModuleMember -Function @(
+    'ConvertTo-ReleaseBump'
+    'Get-ReleaseLabelDefinition'
+    'Resolve-ReleaseDecision'
+    'Test-PrereleaseCreation'
+)

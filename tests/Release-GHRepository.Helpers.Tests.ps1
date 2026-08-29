@@ -44,6 +44,31 @@ Describe 'Get-ReleaseLabelDefinition' {
     }
 }
 
+Describe 'ConvertTo-ReleaseBump' {
+    It 'converts <DefaultBump> to <Expected>' -ForEach @(
+        @{ DefaultBump = 'patch'; Expected = 'Patch' }
+        @{ DefaultBump = 'minor'; Expected = 'Minor' }
+        @{ DefaultBump = 'major'; Expected = 'Major' }
+    ) {
+        ConvertTo-ReleaseBump -DefaultBump $DefaultBump | Should -BeExactly $Expected
+    }
+
+    It 'uses patch when DefaultBump is omitted' {
+        ConvertTo-ReleaseBump | Should -BeExactly 'Patch'
+    }
+
+    It 'rejects invalid DefaultBump [<DefaultBump>]' -ForEach @(
+        @{ DefaultBump = '' }
+        @{ DefaultBump = 'Patch' }
+        @{ DefaultBump = 'prerelease' }
+        @{ DefaultBump = 'none' }
+        @{ DefaultBump = $null }
+    ) {
+        { ConvertTo-ReleaseBump -DefaultBump $DefaultBump } |
+            Should -Throw '*Invalid DefaultBump*patch, minor, major*'
+    }
+}
+
 Describe 'Resolve-ReleaseDecision' {
     It 'resolves <Name>' -ForEach @(
         @{
@@ -115,44 +140,10 @@ Describe 'Resolve-ReleaseDecision' {
         $result.Bump | Should -BeExactly $Bump
         $result.Prerelease | Should -Be $Prerelease
         $result.Skip | Should -Be $Skip
+        $result.DefaultBumpApplied | Should -BeFalse
     }
 
     It 'rejects <Name>' -ForEach @(
-        @{
-            Name    = 'an empty label set'
-            Labels  = @()
-            Message = '*Release decision is missing*'
-        }
-        @{
-            Name    = 'a null label set'
-            Labels  = $null
-            Message = '*Release decision is missing*'
-        }
-        @{
-            Name    = 'legacy bare labels'
-            Labels  = @('Major', 'Minor', 'Patch', 'Prerelease', 'NoRelease')
-            Message = '*Release decision is missing*'
-        }
-        @{
-            Name    = 'lowercase bare labels'
-            Labels  = @('major', 'minor', 'patch', 'prerelease')
-            Message = '*Release decision is missing*'
-        }
-        @{
-            Name    = 'noncanonical casing'
-            Labels  = @('Release:Patch')
-            Message = '*Release decision is missing*'
-        }
-        @{
-            Name    = 'an unknown release label'
-            Labels  = @('release:unknown')
-            Message = '*Release decision is missing*'
-        }
-        @{
-            Name    = 'prerelease without a bump'
-            Labels  = @('release:pre-release')
-            Message = '*release:pre-release requires exactly one release bump label*'
-        }
         @{
             Name    = 'patch and minor bumps'
             Labels  = @('release:patch', 'release:minor')
@@ -182,7 +173,116 @@ Describe 'Resolve-ReleaseDecision' {
         { Resolve-ReleaseDecision -Labels $Labels } | Should -Throw $Message
     }
 
-    It 'accepts exactly the seven valid subsets of owned release labels' {
+    It 'resolves <Expected> from <Name> with the <DefaultBump> default' -ForEach @(
+        @{
+            Name        = 'an empty label set'
+            Labels      = @()
+            DefaultBump = 'patch'
+            Expected    = 'Patch'
+            Prerelease  = $false
+        }
+        @{
+            Name        = 'a null label set'
+            Labels      = $null
+            DefaultBump = 'minor'
+            Expected    = 'Minor'
+            Prerelease  = $false
+        }
+        @{
+            Name        = 'legacy bare labels'
+            Labels      = @('Major', 'Minor', 'Patch', 'Prerelease', 'NoRelease')
+            DefaultBump = 'major'
+            Expected    = 'Major'
+            Prerelease  = $false
+        }
+        @{
+            Name        = 'lowercase bare labels'
+            Labels      = @('major', 'minor', 'patch', 'prerelease')
+            DefaultBump = 'patch'
+            Expected    = 'Patch'
+            Prerelease  = $false
+        }
+        @{
+            Name        = 'noncanonical casing'
+            Labels      = @('Release:Patch')
+            DefaultBump = 'minor'
+            Expected    = 'Minor'
+            Prerelease  = $false
+        }
+        @{
+            Name        = 'an unknown release label'
+            Labels      = @('release:unknown')
+            DefaultBump = 'major'
+            Expected    = 'Major'
+            Prerelease  = $false
+        }
+        @{
+            Name        = 'prerelease without an explicit bump'
+            Labels      = @('release:pre-release')
+            DefaultBump = 'minor'
+            Expected    = 'Minor'
+            Prerelease  = $true
+        }
+    ) {
+        $result = Resolve-ReleaseDecision -Labels $Labels -DefaultBump $DefaultBump
+
+        $result.Bump | Should -BeExactly $Expected
+        $result.Prerelease | Should -Be $Prerelease
+        $result.Skip | Should -BeFalse
+        $result.DefaultBumpApplied | Should -BeTrue
+    }
+
+    It 'applies each valid default to unlabeled and prerelease-only decisions' {
+        $expectedBumps = @{
+            patch = 'Patch'
+            minor = 'Minor'
+            major = 'Major'
+        }
+
+        foreach ($defaultBump in @('patch', 'minor', 'major')) {
+            foreach ($labels in @(@(), @('release:pre-release'))) {
+                $result = Resolve-ReleaseDecision -Labels $labels -DefaultBump $defaultBump
+
+                $result.Bump | Should -BeExactly $expectedBumps[$defaultBump]
+                $result.Prerelease | Should -Be ($labels -ccontains 'release:pre-release')
+                $result.DefaultBumpApplied | Should -BeTrue
+            }
+        }
+    }
+
+    It 'lets every explicit bump label override every valid default' {
+        $explicitBumps = [ordered]@{
+            'release:patch' = 'Patch'
+            'release:minor' = 'Minor'
+            'release:major' = 'Major'
+        }
+
+        foreach ($defaultBump in @('patch', 'minor', 'major')) {
+            foreach ($entry in $explicitBumps.GetEnumerator()) {
+                $result = Resolve-ReleaseDecision -Labels @($entry.Key) -DefaultBump $defaultBump
+
+                $result.Bump | Should -BeExactly $entry.Value
+                $result.DefaultBumpApplied | Should -BeFalse
+            }
+        }
+    }
+
+    It 'lets release:skip override every valid default' {
+        foreach ($defaultBump in @('patch', 'minor', 'major')) {
+            $result = Resolve-ReleaseDecision -Labels @('release:skip') -DefaultBump $defaultBump
+
+            $result.Bump | Should -BeExactly 'None'
+            $result.Skip | Should -BeTrue
+            $result.DefaultBumpApplied | Should -BeFalse
+        }
+    }
+
+    It 'validates DefaultBump before applying an explicit decision' {
+        { Resolve-ReleaseDecision -Labels @('release:patch') -DefaultBump 'Patch' } |
+            Should -Throw '*Invalid DefaultBump*'
+    }
+
+    It 'accepts exactly the nine valid subsets for every default bump' {
         $ownedLabels = @(
             'release:patch'
             'release:minor'
@@ -191,6 +291,8 @@ Describe 'Resolve-ReleaseDecision' {
             'release:skip'
         )
         $validSubsets = @(
+            ''
+            'release:pre-release'
             'release:patch'
             'release:minor'
             'release:major'
@@ -200,22 +302,24 @@ Describe 'Resolve-ReleaseDecision' {
             'release:skip'
         )
 
-        for ($mask = 0; $mask -lt (1 -shl $ownedLabels.Count); $mask++) {
-            $labels = @(
-                for ($index = 0; $index -lt $ownedLabels.Count; $index++) {
-                    if (($mask -band (1 -shl $index)) -ne 0) {
-                        $ownedLabels[$index]
+        foreach ($defaultBump in @('patch', 'minor', 'major')) {
+            for ($mask = 0; $mask -lt (1 -shl $ownedLabels.Count); $mask++) {
+                $labels = @(
+                    for ($index = 0; $index -lt $ownedLabels.Count; $index++) {
+                        if (($mask -band (1 -shl $index)) -ne 0) {
+                            $ownedLabels[$index]
+                        }
                     }
-                }
-            )
-            $subset = ($labels | Sort-Object) -join ','
+                )
+                $subset = ($labels | Sort-Object) -join ','
 
-            if ($validSubsets -ccontains $subset) {
-                { Resolve-ReleaseDecision -Labels $labels } |
-                    Should -Not -Throw -Because "[$subset] is a valid release decision"
-            } else {
-                { Resolve-ReleaseDecision -Labels $labels } |
-                    Should -Throw -Because "[$subset] is not a valid release decision"
+                if ($validSubsets -ccontains $subset) {
+                    { Resolve-ReleaseDecision -Labels $labels -DefaultBump $defaultBump } |
+                        Should -Not -Throw -Because "[$subset] is valid with DefaultBump [$defaultBump]"
+                } else {
+                    { Resolve-ReleaseDecision -Labels $labels -DefaultBump $defaultBump } |
+                        Should -Throw -Because "[$subset] is not a valid release decision"
+                }
             }
         }
     }
