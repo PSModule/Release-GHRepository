@@ -14,6 +14,10 @@ inputs:
     description: The path to the configuration file. Settings in the configuration file take precedence over the action inputs.
     required: false
     default: .github\auto-release.yml
+  DefaultBump:
+    description: The release bump to use when no explicit release bump or skip label exists. Allowed values are patch, minor, and major.
+    required: false
+    default: patch
   CreateMajorTag:
     description: Control whether to create a major tag when a pull request is merged into the main branch.
     required: false
@@ -78,6 +82,7 @@ runs:
       env:
         PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup: ${{ inputs.AutoCleanup }}
         PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile: ${{ inputs.ConfigurationFile }}
+        PSMODULE_AUTO_RELEASE_INPUT_DefaultBump: ${{ inputs.DefaultBump }}
         PSMODULE_AUTO_RELEASE_INPUT_CreateMajorTag: ${{ inputs.CreateMajorTag }}
         PSMODULE_AUTO_RELEASE_INPUT_CreateMinorTag: ${{ inputs.CreateMinorTag }}
         PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat: ${{ inputs.DatePrereleaseFormat }}

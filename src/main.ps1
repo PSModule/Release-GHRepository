@@ -45,6 +45,7 @@ LogGroup 'Set configuration' {
     }
 
     $autoCleanup = ![string]::IsNullOrEmpty($configuration.AutoCleanup) ? $configuration.AutoCleanup -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup -eq 'true'
+    $defaultBump = $null -ne $configuration.DefaultBump ? [string] $configuration.DefaultBump : $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump
     $createMajorTag = ![string]::IsNullOrEmpty($configuration.CreateMajorTag) ? $configuration.CreateMajorTag -EQ 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_CreateMajorTag -EQ 'true'
     $createMinorTag = ![string]::IsNullOrEmpty($configuration.CreateMinorTag) ? $configuration.CreateMinorTag -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_CreateMinorTag -eq 'true'
     $datePrereleaseFormat = ![string]::IsNullOrEmpty($configuration.DatePrereleaseFormat) ? $configuration.DatePrereleaseFormat : $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat
@@ -55,8 +56,11 @@ LogGroup 'Set configuration' {
     $versionPrefix = ![string]::IsNullOrEmpty($configuration.VersionPrefix) ? $configuration.VersionPrefix : $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix
     $whatIf = ![string]::IsNullOrEmpty($configuration.WhatIf) ? $configuration.WhatIf -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf -eq 'true'
 
+    $null = ConvertTo-ReleaseBump -DefaultBump $defaultBump
+
     Write-Output '-------------------------------------------------'
     Write-Output "Auto cleanup enabled:           [$autoCleanup]"
+    Write-Output "Default bump:                   [$defaultBump]"
     Write-Output "Create major tag enabled:       [$createMajorTag]"
     Write-Output "Create minor tag enabled:       [$createMinorTag]"
     Write-Output "Date-based prerelease format:   [$datePrereleaseFormat]"
@@ -147,7 +151,7 @@ LogGroup 'Pull request - Labels' {
     $labels | Format-List | Out-String
 }
 
-$releaseDecision = Resolve-ReleaseDecision -Labels $labels
+$releaseDecision = Resolve-ReleaseDecision -Labels $labels -DefaultBump $defaultBump
 
 $createRelease = $isMerged -and $targetIsDefaultBranch -and -not $releaseDecision.Skip
 $closedPullRequest = $prIsClosed -and -not $isMerged
@@ -159,6 +163,7 @@ $minorRelease = $releaseDecision.Bump -eq 'Minor'
 $patchRelease = $releaseDecision.Bump -eq 'Patch'
 
 Write-Output '-------------------------------------------------'
+Write-Output "Default bump applied:           [$($releaseDecision.DefaultBumpApplied)]"
 Write-Output "Skip release:                   [$($releaseDecision.Skip)]"
 Write-Output "Create a release:               [$createRelease]"
 Write-Output "Create a prerelease:            [$createPrerelease]"
