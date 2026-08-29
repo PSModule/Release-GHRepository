@@ -102,7 +102,7 @@ LogGroup 'Provision release labels' {
         } else {
             gh @arguments
             if ($LASTEXITCODE -ne 0) {
-                throw "Failed to provision the canonical label [$($definition.Name)]."
+                throw "Failed to provision the canonical label [$($definition.Name)]. gh exited with code [$LASTEXITCODE]."
             }
         }
     }

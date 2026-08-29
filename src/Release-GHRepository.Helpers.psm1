@@ -256,9 +256,14 @@ function Resolve-PullRequestReleaseContext {
         throw 'Pull request head SHA is required.'
     }
 
+    $prereleaseName = $headRef -replace '[^a-zA-Z0-9]'
+    if ([string]::IsNullOrWhiteSpace($prereleaseName)) {
+        throw "Pull request head ref [$headRef] does not contain a valid prerelease identifier."
+    }
+
     [PSCustomObject]@{
         HeadRef          = $headRef
-        PrereleaseName   = $headRef -replace '[^a-zA-Z0-9]'
+        PrereleaseName   = $prereleaseName
         PrereleaseTarget = $headSha
     }
 }

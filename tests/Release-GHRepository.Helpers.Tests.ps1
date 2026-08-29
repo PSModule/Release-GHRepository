@@ -380,6 +380,18 @@ Describe 'Resolve-ReleaseDecision' {
             { Resolve-PullRequestReleaseContext -PullRequest $pullRequest } |
                 Should -Throw '*head SHA is required*'
         }
+
+        It 'rejects a head ref that has no valid prerelease identifier' {
+            $pullRequest = [PSCustomObject]@{
+                head = [PSCustomObject]@{
+                    ref = '---'
+                    sha = '0123456789012345678901234567890123456789'
+                }
+            }
+
+            { Resolve-PullRequestReleaseContext -PullRequest $pullRequest } |
+                Should -Throw '*does not contain a valid prerelease identifier*'
+        }
     }
 
     Describe 'Test-PrereleaseCreation' {
