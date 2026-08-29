@@ -1,6 +1,6 @@
 # Release-GHRepository
 
-Create GitHub releases from explicit, owned pull-request labels.
+Create GitHub releases from owned pull-request labels and a configurable default bump.
 
 ## Release decision
 
@@ -11,25 +11,26 @@ Release-GHRepository owns and provisions five labels:
 | `release:patch` | Increment the patch version. | Exactly one bump label. |
 | `release:minor` | Increment the minor version. | Exactly one bump label. |
 | `release:major` | Increment the major version. | Exactly one bump label. |
-| `release:pre-release` | Publish from an open pull request as a prerelease. | With exactly one bump label. |
+| `release:pre-release` | Publish from an open pull request as a prerelease. | Alone or with exactly one bump label. |
 | `release:skip` | Validate without publishing a release. | Without another owned release label. |
 
-Exactly one bump label or `release:skip` is required. There is no default release decision.
+When no owned bump or skip label exists, `DefaultBump` selects `patch`, `minor`, or `major`. Its default is `patch`, preserving the automatic patch behavior from v2. An explicit `release:patch`, `release:minor`, or `release:major` label overrides `DefaultBump`.
+
+`release:pre-release` is a mode. It uses the explicit bump when one is present and otherwise uses `DefaultBump`. `release:skip` suppresses publication instead of applying the default.
 
 The action rejects:
 
-- a missing decision;
+- a `DefaultBump` value other than exactly `patch`, `minor`, or `major`;
 - multiple bump labels;
-- `release:skip` with another owned release label;
-- `release:pre-release` without exactly one bump label.
+- `release:skip` with another owned release label.
 
-Labels outside this set do not affect releases. Bare and legacy labels such as `Major`, `Minor`, `Patch`, `Prerelease`, `NoRelease`, `major`, `minor`, and `patch` are not release decisions.
+Labels outside this set do not affect releases. Bare and legacy labels such as `Major`, `Minor`, `Patch`, `Prerelease`, `NoRelease`, `major`, `minor`, and `patch` are ignored, so a pull request carrying only those labels uses `DefaultBump`.
 
 ## How it works
 
 On every non-WhatIf run, the action creates missing canonical labels and reconciles their colors and descriptions. It leaves all other repository labels unchanged.
 
-An open pull request with `release:pre-release` and one bump label publishes a prerelease. A pull request merged into the default branch with one bump label publishes the stable release. A closed pull request cleans up its prereleases when `AutoCleanup` is enabled. `release:skip` never publishes a version, but a closed skipped pull request still receives prerelease cleanup.
+An open pull request with `release:pre-release` publishes a prerelease from its explicit bump or `DefaultBump`. A pull request merged into the default branch publishes the resolved bump unless it carries `release:skip`. A closed pull request cleans up its prereleases when `AutoCleanup` is enabled. `release:skip` never publishes a version, but a closed skipped pull request still receives prerelease cleanup.
 
 The workflow must run for `labeled` and `unlabeled` events so both valid and invalid label transitions are evaluated. Do not use a workflow path filter to bypass the release decision on non-artifact changes; use `release:skip`.
 
@@ -81,6 +82,7 @@ The `pull_request_target` workflow checks out the trusted base branch. Do not ch
 | --- | --- | --- | --- |
 | `AutoCleanup` | Delete prereleases after the pull request closes. | `true` | false |
 | `ConfigurationFile` | Read settings from this file. File settings take precedence over action inputs. | `.github\auto-release.yml` | false |
+| `DefaultBump` | Select the bump when no explicit bump or skip label exists. Accepts exactly `patch`, `minor`, or `major`. | `patch` | false |
 | `CreateMajorTag` | Create or update the floating major tag after a stable release. | `true` | false |
 | `CreateMinorTag` | Create or update the floating minor tag after a stable release. | `true` | false |
 | `DatePrereleaseFormat` | Append a [.NET date and time format](https://learn.microsoft.com/en-us/dotnet/standard/base-types/standard-date-and-time-format-strings) to prerelease versions. | `''` | false |
@@ -104,6 +106,7 @@ The default configuration file is `.github\auto-release.yml`. Change its path wi
 
 ```yaml
 DatePrereleaseFormat: 'yyyyMMddHHmm'
+DefaultBump: patch
 IncrementalPrerelease: false
 VersionPrefix: ''
 ```
@@ -114,11 +117,11 @@ VersionPrefix: ''
 
 1. Add `issues: write` to the release job and subscribe the workflow to `unlabeled`.
 2. Remove workflow path filters so `release:skip` decisions are validated.
-3. Remove `AutoPatching`, `IgnoreLabels`, `MajorLabels`, `MinorLabels`, and `PatchLabels` from action inputs and configuration files.
+3. Replace `AutoPatching` with `DefaultBump`. Use `DefaultBump: patch` to preserve the v2 `AutoPatching: true` behavior. Remove `IgnoreLabels`, `MajorLabels`, `MinorLabels`, and `PatchLabels`.
 4. Provision the five canonical labels before opening the migration pull request. The action reconciles them on every subsequent run.
 5. Apply both the existing v2 decision and the equivalent canonical decision to the migration pull request so either workflow version can process it.
 6. Update the action reference to `PSModule/Release-GHRepository@v3` after `v3.0.0` is published.
 7. Apply one canonical decision to every other open pull request.
 8. Remove legacy release labels after no open pull request uses them. Removing bare `major`, `minor`, and `patch` labels also prevents Dependabot from applying them as dependency-version metadata.
 
-The first v3 run provisions the canonical labels before validating the pull request. A pull request without a canonical decision fails until a maintainer applies one.
+The first v3 run provisions the canonical labels before processing the pull request. A pull request without an owned bump or skip label uses `DefaultBump`; a maintainer applies an owned label only to override that default or skip publication.
