@@ -324,6 +324,64 @@ Describe 'Resolve-ReleaseDecision' {
         }
     }
 
+    Describe 'Resolve-PullRequestReleaseContext' {
+        It 'uses the branch for naming and the exact head SHA for the release target' {
+            $headSha = '0123456789012345678901234567890123456789'
+            $pullRequest = [PSCustomObject]@{
+                head = [PSCustomObject]@{
+                    ref = 'feature/fork-release'
+                    sha = $headSha
+                }
+            }
+
+            $result = Resolve-PullRequestReleaseContext -PullRequest $pullRequest
+
+            $result.HeadRef | Should -BeExactly 'feature/fork-release'
+            $result.PrereleaseName | Should -BeExactly 'featureforkrelease'
+            $result.PrereleaseTarget | Should -BeExactly $headSha
+        }
+
+        It 'does not use a colliding base-repository branch name as the release target' {
+            $headSha = 'abcdefabcdefabcdefabcdefabcdefabcdefabcd'
+            $pullRequest = [PSCustomObject]@{
+                head = [PSCustomObject]@{
+                    ref = 'main'
+                    sha = $headSha
+                }
+            }
+
+            $result = Resolve-PullRequestReleaseContext -PullRequest $pullRequest
+
+            $result.PrereleaseName | Should -BeExactly 'main'
+            $result.PrereleaseTarget | Should -BeExactly $headSha
+            $result.PrereleaseTarget | Should -Not -BeExactly $result.HeadRef
+        }
+
+        It 'rejects a pull request without a head ref' {
+            $pullRequest = [PSCustomObject]@{
+                head = [PSCustomObject]@{
+                    ref = ''
+                    sha = '0123456789012345678901234567890123456789'
+                }
+            }
+
+            { Resolve-PullRequestReleaseContext -PullRequest $pullRequest } |
+                Should -Throw '*head ref is required*'
+        }
+
+        It 'rejects a pull request without a head SHA' {
+            $pullRequest = [PSCustomObject]@{
+                head = [PSCustomObject]@{
+                    ref = 'feature/missing-sha'
+                    sha = ''
+                }
+            }
+
+            { Resolve-PullRequestReleaseContext -PullRequest $pullRequest } |
+                Should -Throw '*head SHA is required*'
+        }
+    }
+
     Describe 'Test-PrereleaseCreation' {
         It 'returns <Expected> for <Name>' -ForEach @(
             @{

@@ -207,6 +207,62 @@ function Resolve-ReleaseDecision {
     }
 }
 
+function Resolve-PullRequestReleaseContext {
+    <#
+        .SYNOPSIS
+        Resolve branch-derived naming and the immutable target for a pull request.
+
+        .DESCRIPTION
+        Keep the pull-request head branch for prerelease naming while selecting
+        the exact head commit SHA as the release target.
+
+        .EXAMPLE
+        $pullRequest = [PSCustomObject]@{
+            head = [PSCustomObject]@{
+                ref = 'feature/example'
+                sha = '0123456789012345678901234567890123456789'
+            }
+        }
+        Resolve-PullRequestReleaseContext -PullRequest $pullRequest
+
+        Return a prerelease name of featureexample and the supplied commit SHA as
+        the prerelease target.
+
+        .INPUTS
+        None
+
+        You can't pipe objects to Resolve-PullRequestReleaseContext.
+
+        .OUTPUTS
+        System.Management.Automation.PSCustomObject
+
+        The validated pull-request release context.
+    #>
+    [OutputType([PSCustomObject])]
+    [CmdletBinding()]
+    param(
+        # The pull request from the GitHub event payload.
+        [Parameter(Mandatory)]
+        [PSCustomObject] $PullRequest
+    )
+
+    $headRef = [string] $PullRequest.head.ref
+    $headSha = [string] $PullRequest.head.sha
+
+    if ([string]::IsNullOrWhiteSpace($headRef)) {
+        throw 'Pull request head ref is required.'
+    }
+    if ([string]::IsNullOrWhiteSpace($headSha)) {
+        throw 'Pull request head SHA is required.'
+    }
+
+    [PSCustomObject]@{
+        HeadRef          = $headRef
+        PrereleaseName   = $headRef -replace '[^a-zA-Z0-9]'
+        PrereleaseTarget = $headSha
+    }
+}
+
 function Test-PrereleaseCreation {
     <#
         .SYNOPSIS
@@ -257,5 +313,6 @@ Export-ModuleMember -Function @(
     'ConvertTo-ReleaseBump'
     'Get-ReleaseLabelDefinition'
     'Resolve-ReleaseDecision'
+    'Resolve-PullRequestReleaseContext'
     'Test-PrereleaseCreation'
 )

@@ -30,7 +30,7 @@ Labels outside this set do not affect releases. Bare and legacy labels such as `
 
 On every non-WhatIf run, the action creates missing canonical labels and reconciles their colors and descriptions. It leaves all other repository labels unchanged.
 
-An open pull request with `release:pre-release` publishes a prerelease from its explicit bump or `DefaultBump`. A pull request merged into the default branch publishes the resolved bump unless it carries `release:skip`. A closed pull request cleans up its prereleases when `AutoCleanup` is enabled. `release:skip` never publishes a version, but a closed skipped pull request still receives prerelease cleanup.
+An open pull request with `release:pre-release` publishes a prerelease from its explicit bump or `DefaultBump`. The prerelease name uses the head branch, while its tag targets the exact pull-request head commit. A pull request merged into the default branch publishes the resolved bump unless it carries `release:skip`. A closed pull request cleans up its prereleases when `AutoCleanup` is enabled. `release:skip` never publishes a version, but a closed skipped pull request still receives prerelease cleanup.
 
 The workflow must run for `labeled` and `unlabeled` events so both valid and invalid label transitions are evaluated. Do not use a workflow path filter to bypass the release decision on non-artifact changes; use `release:skip`.
 

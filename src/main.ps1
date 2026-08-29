@@ -133,7 +133,9 @@ $actionType = $githubEvent.action
 $isMerged = ($pull_request.merged).ToString() -eq 'True'
 $prIsClosed = $pull_request.state -eq 'closed'
 $prBaseRef = $pull_request.base.ref
-$prHeadRef = $pull_request.head.ref
+$pullRequestReleaseContext = Resolve-PullRequestReleaseContext -PullRequest $pull_request
+$prHeadRef = $pullRequestReleaseContext.HeadRef
+$prereleaseTarget = $pullRequestReleaseContext.PrereleaseTarget
 $targetIsDefaultBranch = $pull_request.base.ref -eq $defaultBranchName
 
 Write-Output '-------------------------------------------------'
@@ -144,6 +146,7 @@ Write-Output "PR Merged:                      [$isMerged]"
 Write-Output "PR Closed:                      [$prIsClosed]"
 Write-Output "PR Base Ref:                    [$prBaseRef]"
 Write-Output "PR Head Ref:                    [$prHeadRef]"
+Write-Output "PR Head SHA:                    [$prereleaseTarget]"
 Write-Output "Target is default branch:       [$targetIsDefaultBranch]"
 Write-Output '-------------------------------------------------'
 
@@ -162,7 +165,7 @@ $releaseDecision = Resolve-ReleaseDecision -Labels $labels -DefaultBump $default
 $createRelease = $isMerged -and $targetIsDefaultBranch -and -not $releaseDecision.Skip
 $closedPullRequest = $prIsClosed -and -not $isMerged
 $createPrerelease = Test-PrereleaseCreation -ReleaseDecision $releaseDecision -PullRequestClosed:$prIsClosed
-$prereleaseName = $prHeadRef -replace '[^a-zA-Z0-9]'
+$prereleaseName = $pullRequestReleaseContext.PrereleaseName
 
 $majorRelease = $releaseDecision.Bump -eq 'Major'
 $minorRelease = $releaseDecision.Bump -eq 'Minor'
@@ -290,7 +293,7 @@ if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $w
             }
 
             # Add remaining parameters
-            $releaseCreateCommand += @('--target', $prHeadRef, '--prerelease')
+            $releaseCreateCommand += @('--target', $prereleaseTarget, '--prerelease')
 
             Write-Output "gh $($releaseCreateCommand -join ' ')"
             if (-not $whatIf) {
