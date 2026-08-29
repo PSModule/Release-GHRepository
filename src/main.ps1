@@ -176,8 +176,7 @@ Write-Output '-------------------------------------------------'
 LogGroup 'Get releases' {
     $releases = gh release list --json 'createdAt,isDraft,isLatest,isPrerelease,name,publishedAt,tagName' | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) {
-        Write-Error 'Failed to list all releases for the repo.'
-        exit $LASTEXITCODE
+        throw "Failed to list all releases for the repo. gh exited with code [$LASTEXITCODE]."
     }
     $releases | Select-Object -Property name, isPrerelease, isLatest, publishedAt | Format-Table | Out-String
 }
@@ -250,8 +249,7 @@ if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $w
                 } else {
                     gh release delete $newVersion --cleanup-tag --yes
                     if ($LASTEXITCODE -ne 0) {
-                        Write-Error "Failed to delete the release [$newVersion]."
-                        exit $LASTEXITCODE
+                        throw "Failed to delete the release [$newVersion]. gh exited with code [$LASTEXITCODE]."
                     }
                 }
             }
@@ -293,8 +291,7 @@ if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $w
                 # Execute the command and capture the output
                 $releaseURL = gh @releaseCreateCommand
                 if ($LASTEXITCODE -ne 0) {
-                    Write-Error "Failed to create the release [$newVersion]."
-                    exit $LASTEXITCODE
+                    throw "Failed to create the release [$newVersion]. gh exited with code [$LASTEXITCODE]."
                 }
             }
 
@@ -303,8 +300,7 @@ if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $w
             } else {
                 gh pr comment $pull_request.number -b "The release [$newVersion]($releaseURL) has been created."
                 if ($LASTEXITCODE -ne 0) {
-                    Write-Error 'Failed to comment on the pull request.'
-                    exit $LASTEXITCODE
+                    throw "Failed to comment on the pull request. gh exited with code [$LASTEXITCODE]."
                 }
             }
         } else {
@@ -341,8 +337,7 @@ if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $w
             if (-not $whatIf) {
                 gh @releaseCreateCommand
                 if ($LASTEXITCODE -ne 0) {
-                    Write-Error "Failed to create the release [$newVersion]."
-                    exit $LASTEXITCODE
+                    throw "Failed to create the release [$newVersion]. gh exited with code [$LASTEXITCODE]."
                 }
             }
 
@@ -353,8 +348,7 @@ if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $w
                 } else {
                     git tag -f $majorTag 'main'
                     if ($LASTEXITCODE -ne 0) {
-                        Write-Error "Failed to create major tag [$majorTag]."
-                        exit $LASTEXITCODE
+                        throw "Failed to create major tag [$majorTag]. git exited with code [$LASTEXITCODE]."
                     }
                 }
             }
@@ -366,8 +360,7 @@ if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $w
                 } else {
                     git tag -f $minorTag 'main'
                     if ($LASTEXITCODE -ne 0) {
-                        Write-Error "Failed to create minor tag [$minorTag]."
-                        exit $LASTEXITCODE
+                        throw "Failed to create minor tag [$minorTag]. git exited with code [$LASTEXITCODE]."
                     }
                 }
             }
@@ -377,8 +370,7 @@ if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $w
             } else {
                 git push origin --tags --force
                 if ($LASTEXITCODE -ne 0) {
-                    Write-Error 'Failed to push tags.'
-                    exit $LASTEXITCODE
+                    throw "Failed to push tags. git exited with code [$LASTEXITCODE]."
                 }
             }
         }
@@ -403,8 +395,7 @@ if (($prIsClosed -and $autoCleanup) -or $whatIf) {
             } else {
                 gh release delete $rel.tagName --cleanup-tag --yes
                 if ($LASTEXITCODE -ne 0) {
-                    Write-Error "Failed to delete release [$relTagName]."
-                    exit $LASTEXITCODE
+                    throw "Failed to delete release [$relTagName]. gh exited with code [$LASTEXITCODE]."
                 }
             }
         }
