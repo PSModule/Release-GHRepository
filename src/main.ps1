@@ -305,7 +305,8 @@ if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $w
             }
 
             if ($whatIf) {
-                Write-Output 'WhatIf: gh pr comment $pull_request.number -b "The release [$newVersion] has been created."'
+                $commentPreview = 'WhatIf: gh pr comment {0} -b "The release [{1}] has been created."' -f $pull_request.number, $newVersion
+                Write-Output $commentPreview
             } else {
                 gh pr comment $pull_request.number -b "The release [$newVersion]($releaseURL) has been created."
                 if ($LASTEXITCODE -ne 0) {
