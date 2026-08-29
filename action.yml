@@ -15,7 +15,7 @@ inputs:
     required: false
     default: .github\auto-release.yml
   DefaultBump:
-    description: The release bump to use when no explicit release bump or skip label exists. Allowed values are patch, minor, and major.
+    description: The release bump to use when no explicit release bump or skip label exists. Accepts exactly patch, minor, or major with case-sensitive matching.
     required: false
     default: patch
   CreateMajorTag:

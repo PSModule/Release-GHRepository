@@ -45,7 +45,13 @@ LogGroup 'Set configuration' {
     }
 
     $autoCleanup = ![string]::IsNullOrEmpty($configuration.AutoCleanup) ? $configuration.AutoCleanup -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup -eq 'true'
-    $defaultBump = $null -ne $configuration.DefaultBump ? [string] $configuration.DefaultBump : $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump
+    $defaultBump = if ($null -ne $configuration.DefaultBump) {
+        [string] $configuration.DefaultBump
+    } elseif ([string]::IsNullOrEmpty($env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump)) {
+        'patch'
+    } else {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump
+    }
     $createMajorTag = ![string]::IsNullOrEmpty($configuration.CreateMajorTag) ? $configuration.CreateMajorTag -EQ 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_CreateMajorTag -EQ 'true'
     $createMinorTag = ![string]::IsNullOrEmpty($configuration.CreateMinorTag) ? $configuration.CreateMinorTag -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_CreateMinorTag -eq 'true'
     $datePrereleaseFormat = ![string]::IsNullOrEmpty($configuration.DatePrereleaseFormat) ? $configuration.DatePrereleaseFormat : $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat
