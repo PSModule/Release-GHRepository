@@ -66,7 +66,7 @@ inputs:
     description: Specifies the version of the GitHub module to be installed. Accepts an exact version or a NuGet version range (for example '[1.2.0, 2.0.0)').
     required: false
   Prerelease:
-    description: Allow prerelease versions of the GitHub module dependency. This does not control repository releases; use the release:pre-release label.
+    description: Allow prerelease versions of the GitHub module dependency. This does not control repository releases; use the release:prerelease label.
     required: false
     default: 'false'
   WorkingDirectory:

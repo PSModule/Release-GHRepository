@@ -11,12 +11,12 @@ Release-GHRepository owns and provisions five labels:
 | `release:patch` | Increment the patch version. | Exactly one bump label. |
 | `release:minor` | Increment the minor version. | Exactly one bump label. |
 | `release:major` | Increment the major version. | Exactly one bump label. |
-| `release:pre-release` | Publish from an open pull request as a prerelease. | Alone or with exactly one bump label. |
+| `release:prerelease` | Publish from an open pull request as a prerelease. | Alone or with exactly one bump label. |
 | `release:skip` | Validate without publishing a release. | Without another owned release label. |
 
 When no owned bump or skip label exists, `DefaultBump` selects `patch`, `minor`, or `major`. Its default is `patch`, preserving the automatic patch behavior from v2. An explicit `release:patch`, `release:minor`, or `release:major` label overrides `DefaultBump`.
 
-`release:pre-release` is a mode. It uses the explicit bump when one is present and otherwise uses `DefaultBump`. `release:skip` suppresses publication instead of applying the default.
+`release:prerelease` is a mode. It uses the explicit bump when one is present and otherwise uses `DefaultBump`. `release:skip` suppresses publication instead of applying the default.
 
 The action rejects:
 
@@ -24,13 +24,13 @@ The action rejects:
 - multiple bump labels;
 - `release:skip` with another owned release label.
 
-Labels outside this set do not affect releases. Bare and legacy labels such as `Major`, `Minor`, `Patch`, `Prerelease`, `NoRelease`, `major`, `minor`, and `patch` are ignored, so a pull request carrying only those labels uses `DefaultBump`.
+Labels outside this set do not affect releases. Bare and legacy labels such as `Major`, `Minor`, `Patch`, `Prerelease`, `NoRelease`, `major`, `minor`, `patch`, and the retired `release:pre-release` are ignored, so a pull request carrying only those labels uses `DefaultBump`.
 
 ## How it works
 
 On every non-WhatIf run, the action creates missing canonical labels and reconciles their colors and descriptions. It leaves all other repository labels unchanged.
 
-An open pull request with `release:pre-release` publishes a prerelease from its explicit bump or `DefaultBump`. The prerelease name uses the head branch, while its tag targets the exact pull-request head commit. A pull request merged into the default branch publishes the resolved bump unless it carries `release:skip`. A closed pull request cleans up its prereleases when `AutoCleanup` is enabled. `release:skip` never publishes a version, but a closed skipped pull request still receives prerelease cleanup.
+An open pull request with `release:prerelease` publishes a prerelease from its explicit bump or `DefaultBump`. The prerelease name uses the head branch, while its tag targets the exact pull-request head commit. A pull request merged into the default branch publishes the resolved bump unless it carries `release:skip`. A closed pull request cleans up its prereleases when `AutoCleanup` is enabled. `release:skip` never publishes a version, but a closed skipped pull request still receives prerelease cleanup.
 
 The workflow must run for `labeled` and `unlabeled` events so both valid and invalid label transitions are evaluated. Do not use a workflow path filter to bypass the release decision on non-artifact changes; use `release:skip`.
 
@@ -98,7 +98,7 @@ The `pull_request_target` workflow checks out the trusted base branch. Do not ch
 | `Prerelease` | Allow a prerelease version of the GitHub module dependency. This does not select a repository prerelease. | `false` | false |
 | `WorkingDirectory` | Set the directory where the script runs. | `${{ github.workspace }}` | false |
 
-Use the `release:pre-release` label to select repository prerelease behavior. The similarly named `Prerelease` action input only controls dependency resolution for the GitHub module used internally.
+Use the `release:prerelease` label to select repository prerelease behavior. The similarly named `Prerelease` action input only controls dependency resolution for the GitHub module used internally.
 
 ### Configuration file
 
