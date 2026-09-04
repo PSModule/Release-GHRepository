@@ -3,7 +3,7 @@ name: Release
 run-name: "Release - [${{ github.event.pull_request.title }} #${{ github.event.pull_request.number }}] by @${{ github.actor }}"
 
 on:
-  pull_request:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] trusted base checkout; writes labels and releases
     branches:
       - main
     types:
@@ -12,16 +12,15 @@ on:
       - reopened
       - synchronize
       - labeled
-    paths:
-      - 'action.yml'
-      - 'src/**'
+      - unlabeled
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: write # Required to create releases
+  issues: write # Required to provision release labels
   pull-requests: write # Required to create comments on the PRs
 
 jobs:
