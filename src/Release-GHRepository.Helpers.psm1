@@ -55,6 +55,55 @@ function Get-ReleaseLabelDefinition {
     }
 }
 
+function Get-PrereleaseCleanupCandidate {
+    <#
+        .SYNOPSIS
+        Return prereleases that belong to a pull-request prerelease identifier.
+
+        .DESCRIPTION
+        Select only releases marked as prereleases whose tag contains the exact
+        prerelease identifier immediately after the SemVer hyphen. The identifier
+        must end the tag or be followed by a dot.
+
+        .EXAMPLE
+        Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName 'feature123'
+
+        Return prereleases tagged with -feature123 or -feature123.<suffix>.
+
+        .INPUTS
+        None
+
+        You can't pipe objects to Get-PrereleaseCleanupCandidate.
+
+        .OUTPUTS
+        System.Management.Automation.PSCustomObject
+
+        A prerelease that belongs to the requested identifier.
+    #>
+    [OutputType([PSCustomObject])]
+    [CmdletBinding()]
+    param(
+        # The GitHub release records to inspect.
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [AllowNull()]
+        [PSCustomObject[]] $Releases,
+
+        # The normalized pull-request prerelease identifier.
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $PrereleaseName
+    )
+
+    $escapedPrereleaseName = [regex]::Escape($PrereleaseName)
+    $tagPattern = "-$escapedPrereleaseName(?:\.|$)"
+
+    $Releases | Where-Object {
+        $_.isPrerelease -eq $true -and
+        [string] $_.tagName -match $tagPattern
+    }
+}
+
 function ConvertTo-ReleaseBump {
     <#
         .SYNOPSIS
@@ -316,6 +365,7 @@ function Test-PrereleaseCreation {
 
 Export-ModuleMember -Function @(
     'ConvertTo-ReleaseBump'
+    'Get-PrereleaseCleanupCandidate'
     'Get-ReleaseLabelDefinition'
     'Resolve-ReleaseDecision'
     'Resolve-PullRequestReleaseContext'

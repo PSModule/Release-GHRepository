@@ -44,6 +44,88 @@ Describe 'Get-ReleaseLabelDefinition' {
     }
 }
 
+Describe 'Get-PrereleaseCleanupCandidate' {
+    BeforeAll {
+        $releases = @(
+            [PSCustomObject]@{
+                tagName      = 'v1.2.3-123.1'
+                isPrerelease = $true
+            }
+            [PSCustomObject]@{
+                tagName      = 'v1.2.3-123'
+                isPrerelease = $true
+            }
+            [PSCustomObject]@{
+                tagName      = 'v1.2.3-1234.1'
+                isPrerelease = $true
+            }
+            [PSCustomObject]@{
+                tagName      = 'v1.2.3-other.123.1'
+                isPrerelease = $true
+            }
+            [PSCustomObject]@{
+                tagName      = 'v1.2.3'
+                isPrerelease = $false
+            }
+            [PSCustomObject]@{
+                tagName      = 'v123.0.0'
+                isPrerelease = $false
+            }
+            [PSCustomObject]@{
+                tagName      = 'v1.2.3-123.2'
+                isPrerelease = $false
+            }
+        )
+    }
+
+    It 'returns only prereleases with the exact numeric identifier segment' {
+        $result = @(Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName '123')
+
+        $result.tagName | Should -Be @('v1.2.3-123.1', 'v1.2.3-123')
+    }
+
+    It 'never returns stable releases whose versions overlap the identifier' {
+        $result = @(Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName '123')
+
+        $result | Where-Object { -not $_.isPrerelease } | Should -BeNullOrEmpty
+        $result.tagName | Should -Not -Contain 'v1.2.3'
+        $result.tagName | Should -Not -Contain 'v123.0.0'
+        $result.tagName | Should -Not -Contain 'v1.2.3-123.2'
+    }
+
+    It 'does not match a longer or later prerelease identifier segment' {
+        $result = @(Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName '123')
+
+        $result.tagName | Should -Not -Contain 'v1.2.3-1234.1'
+        $result.tagName | Should -Not -Contain 'v1.2.3-other.123.1'
+    }
+
+    It 'escapes regular-expression characters in the identifier' {
+        $regexReleases = @(
+            [PSCustomObject]@{
+                tagName      = 'v1.2.3-feature.test.1'
+                isPrerelease = $true
+            }
+            [PSCustomObject]@{
+                tagName      = 'v1.2.3-featureXtest.1'
+                isPrerelease = $true
+            }
+        )
+
+        $result = @(
+            Get-PrereleaseCleanupCandidate -Releases $regexReleases -PrereleaseName 'feature.test'
+        )
+
+        $result.tagName | Should -Be @('v1.2.3-feature.test.1')
+    }
+
+    It 'returns no candidates for an empty release list' {
+        $result = @(Get-PrereleaseCleanupCandidate -Releases @() -PrereleaseName 'feature')
+
+        $result | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'ConvertTo-ReleaseBump' {
     It 'converts <DefaultBump> to <Expected>' -ForEach @(
         @{ DefaultBump = 'patch'; Expected = 'Patch' }

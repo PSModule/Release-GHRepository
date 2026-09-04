@@ -391,7 +391,9 @@ if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $w
 }
 
 LogGroup 'List prereleases using the same name' {
-    $prereleasesToCleanup = $releases | Where-Object { $_.tagName -like "*$prereleaseName*" }
+    $prereleasesToCleanup = @(
+        Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName $prereleaseName
+    )
     $prereleasesToCleanup | Select-Object -Property name, publishedAt, isPrerelease, isLatest | Format-Table | Out-String
 }
 
