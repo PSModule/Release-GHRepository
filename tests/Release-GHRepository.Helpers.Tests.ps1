@@ -20,7 +20,7 @@ Describe 'Get-ReleaseLabelDefinition' {
             'release:patch'
             'release:minor'
             'release:major'
-            'release:pre-release'
+            'release:prerelease'
             'release:skip'
         )
     }
@@ -33,7 +33,7 @@ Describe 'Get-ReleaseLabelDefinition' {
         @{ Name = 'release:patch' }
         @{ Name = 'release:minor' }
         @{ Name = 'release:major' }
-        @{ Name = 'release:pre-release' }
+        @{ Name = 'release:prerelease' }
         @{ Name = 'release:skip' }
     ) {
         $definition = $definitions | Where-Object Name -CEQ $Name
@@ -94,21 +94,21 @@ Describe 'Resolve-ReleaseDecision' {
         }
         @{
             Name       = 'a patch prerelease'
-            Labels     = @('release:patch', 'release:pre-release')
+            Labels     = @('release:patch', 'release:prerelease')
             Bump       = 'Patch'
             Prerelease = $true
             Skip       = $false
         }
         @{
             Name       = 'a minor prerelease'
-            Labels     = @('release:minor', 'release:pre-release')
+            Labels     = @('release:minor', 'release:prerelease')
             Bump       = 'Minor'
             Prerelease = $true
             Skip       = $false
         }
         @{
             Name       = 'a major prerelease'
-            Labels     = @('release:major', 'release:pre-release')
+            Labels     = @('release:major', 'release:prerelease')
             Bump       = 'Major'
             Prerelease = $true
             Skip       = $false
@@ -166,7 +166,7 @@ Describe 'Resolve-ReleaseDecision' {
         }
         @{
             Name    = 'skip and prerelease'
-            Labels  = @('release:skip', 'release:pre-release')
+            Labels  = @('release:skip', 'release:prerelease')
             Message = '*release:skip must not be combined*'
         }
     ) {
@@ -217,8 +217,15 @@ Describe 'Resolve-ReleaseDecision' {
             Prerelease  = $false
         }
         @{
-            Name        = 'prerelease without an explicit bump'
+            Name        = 'the retired release:pre-release label'
             Labels      = @('release:pre-release')
+            DefaultBump = 'patch'
+            Expected    = 'Patch'
+            Prerelease  = $false
+        }
+        @{
+            Name        = 'prerelease without an explicit bump'
+            Labels      = @('release:prerelease')
             DefaultBump = 'minor'
             Expected    = 'Minor'
             Prerelease  = $true
@@ -240,11 +247,11 @@ Describe 'Resolve-ReleaseDecision' {
         }
 
         foreach ($defaultBump in @('patch', 'minor', 'major')) {
-            foreach ($labels in @(@(), @('release:pre-release'))) {
+            foreach ($labels in @(@(), @('release:prerelease'))) {
                 $result = Resolve-ReleaseDecision -Labels $labels -DefaultBump $defaultBump
 
                 $result.Bump | Should -BeExactly $expectedBumps[$defaultBump]
-                $result.Prerelease | Should -Be ($labels -ccontains 'release:pre-release')
+                $result.Prerelease | Should -Be ($labels -ccontains 'release:prerelease')
                 $result.DefaultBumpApplied | Should -BeTrue
             }
         }
@@ -287,18 +294,18 @@ Describe 'Resolve-ReleaseDecision' {
             'release:patch'
             'release:minor'
             'release:major'
-            'release:pre-release'
+            'release:prerelease'
             'release:skip'
         )
         $validSubsets = @(
             ''
-            'release:pre-release'
+            'release:prerelease'
             'release:patch'
             'release:minor'
             'release:major'
-            'release:patch,release:pre-release'
-            'release:minor,release:pre-release'
-            'release:major,release:pre-release'
+            'release:patch,release:prerelease'
+            'release:minor,release:prerelease'
+            'release:major,release:prerelease'
             'release:skip'
         )
 
@@ -398,13 +405,13 @@ Describe 'Resolve-ReleaseDecision' {
         It 'returns <Expected> for <Name>' -ForEach @(
             @{
                 Name     = 'an open prerelease pull request'
-                Labels   = @('release:patch', 'release:pre-release')
+                Labels   = @('release:patch', 'release:prerelease')
                 Closed   = $false
                 Expected = $true
             }
             @{
                 Name     = 'a closed prerelease pull request'
-                Labels   = @('release:patch', 'release:pre-release')
+                Labels   = @('release:patch', 'release:prerelease')
                 Closed   = $true
                 Expected = $false
             }

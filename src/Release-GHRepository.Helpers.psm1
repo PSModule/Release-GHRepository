@@ -44,7 +44,7 @@ function Get-ReleaseLabelDefinition {
         Description = 'Publish a major release.'
     }
     [PSCustomObject]@{
-        Name        = 'release:pre-release'
+        Name        = 'release:prerelease'
         Color       = '8d7bdf'
         Description = 'Publish a prerelease from this open pull request.'
     }
@@ -108,7 +108,7 @@ function Resolve-ReleaseDecision {
 
         .DESCRIPTION
         Evaluate only the five labels owned by Release-GHRepository. An explicit
-        bump label overrides DefaultBump, release:pre-release selects prerelease
+        bump label overrides DefaultBump, release:prerelease selects prerelease
         mode, and release:skip suppresses publication. Reject conflicting owned-label
         combinations.
 
@@ -118,7 +118,7 @@ function Resolve-ReleaseDecision {
         Return a Minor stable-release decision.
 
         .EXAMPLE
-        Resolve-ReleaseDecision -Labels @('release:patch', 'release:pre-release')
+        Resolve-ReleaseDecision -Labels @('release:patch', 'release:prerelease')
 
         Return a Patch prerelease decision.
 
@@ -159,7 +159,7 @@ function Resolve-ReleaseDecision {
         'release:minor' = 'Minor'
         'release:major' = 'Major'
     }
-    $ownedLabelNames = @($bumpLabelTypes.Keys) + @('release:pre-release', 'release:skip')
+    $ownedLabelNames = @($bumpLabelTypes.Keys) + @('release:prerelease', 'release:skip')
     $ownedLabels = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::Ordinal
     )
@@ -171,7 +171,7 @@ function Resolve-ReleaseDecision {
     }
 
     $hasSkip = $ownedLabels.Contains('release:skip')
-    $hasPrerelease = $ownedLabels.Contains('release:pre-release')
+    $hasPrerelease = $ownedLabels.Contains('release:prerelease')
     $bumpLabels = @($bumpLabelTypes.Keys | Where-Object { $ownedLabels.Contains($_) })
 
     if ($hasSkip) {
@@ -278,13 +278,13 @@ function Test-PrereleaseCreation {
         and the pull request remains open.
 
         .EXAMPLE
-        $decision = Resolve-ReleaseDecision -Labels @('release:patch', 'release:pre-release')
+        $decision = Resolve-ReleaseDecision -Labels @('release:patch', 'release:prerelease')
         Test-PrereleaseCreation -ReleaseDecision $decision
 
         Return true for an open pull request carrying a valid prerelease decision.
 
         .EXAMPLE
-        $decision = Resolve-ReleaseDecision -Labels @('release:patch', 'release:pre-release')
+        $decision = Resolve-ReleaseDecision -Labels @('release:patch', 'release:prerelease')
         Test-PrereleaseCreation -ReleaseDecision $decision -PullRequestClosed
 
         Return false after the pull request closes.
