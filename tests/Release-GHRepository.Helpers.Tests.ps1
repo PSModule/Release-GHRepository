@@ -10,6 +10,197 @@ BeforeAll {
     Import-Module -Name $modulePath -Force
 }
 
+Describe 'Resolve-ReleaseConfiguration' {
+    BeforeAll {
+        $resolveConfiguration = @{
+            Defaults = [ordered]@{
+                AutoCleanup              = 'true'
+                DefaultBump              = 'patch'
+                CreateMajorTag           = 'true'
+                CreateMinorTag           = 'true'
+                DatePrereleaseFormat     = ''
+                IncrementalPrerelease    = 'true'
+                UsePRTitleAsReleaseName  = 'false'
+                UsePRBodyAsReleaseNotes  = 'true'
+                UsePRTitleAsNotesHeading = 'true'
+                VersionPrefix            = 'v'
+                WhatIf                   = 'false'
+            }
+        }
+    }
+
+    It 'applies every documented controller default when settings are omitted' {
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration
+        $expected = [ordered]@{
+            AutoCleanup              = $true
+            DefaultBump              = 'patch'
+            CreateMajorTag           = $true
+            CreateMinorTag           = $true
+            DatePrereleaseFormat     = ''
+            IncrementalPrerelease    = $true
+            UsePRTitleAsReleaseName  = $false
+            UsePRBodyAsReleaseNotes  = $true
+            UsePRTitleAsNotesHeading = $true
+            VersionPrefix            = 'v'
+            WhatIf                   = $false
+        }
+
+        $result.PSObject.Properties.Name | Should -Be @($expected.Keys)
+        foreach ($name in $expected.Keys) {
+            $result.$name | Should -Be $expected[$name] -Because "[$name] has a documented default"
+            $result.$name.GetType() | Should -Be $expected[$name].GetType()
+        }
+    }
+
+    It 'uses a caller DefaultBump when the file omits it' {
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ DefaultBump = 'minor' } -Configuration @{}
+        $decision = Resolve-ReleaseDecision -Labels @() -DefaultBump $result.DefaultBump
+
+        $decision.Bump | Should -BeExactly 'Minor'
+        $decision.DefaultBumpApplied | Should -BeTrue
+    }
+
+    It 'lets file settings override caller inputs without mutating either mapping' {
+        $inputs = @{ DefaultBump = 'patch'; AutoCleanup = 'true'; VersionPrefix = 'v' }
+        $configuration = [ordered]@{ DefaultBump = 'major'; AutoCleanup = $false; VersionPrefix = '' }
+
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Inputs $inputs -Configuration $configuration
+        $decision = Resolve-ReleaseDecision -Labels @() -DefaultBump $result.DefaultBump
+
+        $decision.Bump | Should -BeExactly 'Major'
+        $result.AutoCleanup | Should -BeFalse
+        $result.VersionPrefix | Should -BeExactly ''
+        $inputs.DefaultBump | Should -BeExactly 'patch'
+        $inputs.AutoCleanup | Should -BeExactly 'true'
+        $configuration.DefaultBump | Should -BeExactly 'major'
+        $configuration.AutoCleanup | Should -BeFalse
+        $configuration.Count | Should -Be 3
+    }
+
+    It 'lets an owned bump override the effective configured default' {
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ DefaultBump = 'major' }
+        $decision = Resolve-ReleaseDecision -Labels @('release:minor') -DefaultBump $result.DefaultBump
+
+        $decision.Bump | Should -BeExactly 'Minor'
+        $decision.DefaultBumpApplied | Should -BeFalse
+    }
+
+    It 'preserves an empty caller value for <Name>' -ForEach @(
+        @{ Name = 'VersionPrefix' }
+        @{ Name = 'DatePrereleaseFormat' }
+    ) {
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ $Name = '' }
+
+        $result.$Name | Should -BeExactly ''
+    }
+
+    It 'lets an empty file value override a nonempty input for <Name>' -ForEach @(
+        @{ Name = 'VersionPrefix'; InputValue = 'v' }
+        @{ Name = 'DatePrereleaseFormat'; InputValue = 'yyyyMMddHHmm' }
+    ) {
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ $Name = $InputValue } -Configuration @{ $Name = '' }
+
+        $result.$Name | Should -BeExactly ''
+    }
+
+    It 'accepts boolean values and case-insensitive true/false strings for every boolean setting' {
+        $names = @(
+            'AutoCleanup'
+            'CreateMajorTag'
+            'CreateMinorTag'
+            'IncrementalPrerelease'
+            'UsePRTitleAsReleaseName'
+            'UsePRBodyAsReleaseNotes'
+            'UsePRTitleAsNotesHeading'
+            'WhatIf'
+        )
+
+        foreach ($name in $names) {
+            foreach ($value in @($true, $false, 'true', 'false', 'TRUE', 'FALSE')) {
+                $result = Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ $name = $value }
+
+                $result.$name | Should -BeOfType ([bool])
+                $result.$name | Should -Be ($value.ToString() -eq 'true')
+            }
+        }
+    }
+
+    It 'rejects invalid boolean setting [<Value>]' -ForEach @(
+        @{ Value = '' }
+        @{ Value = 'yes' }
+        @{ Value = ' true ' }
+        @{ Value = 1 }
+        @{ Value = $null }
+        @{ Value = @('true', 'false') }
+    ) {
+        { Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ WhatIf = $Value } } |
+            Should -Throw '*WhatIf*true or false*'
+    }
+
+    It 'rejects an explicit invalid DefaultBump [<Value>] instead of selecting patch' -ForEach @(
+        @{ Value = '' }
+        @{ Value = $null }
+        @{ Value = 'Patch' }
+        @{ Value = 'date' }
+        @{ Value = 'none' }
+        @{ Value = 1 }
+        @{ Value = @('patch', 'minor') }
+    ) {
+        { Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ DefaultBump = $Value } } |
+            Should -Throw '*DefaultBump*'
+    }
+
+    It 'rejects an invalid input that is not overridden by a valid file setting' {
+        { Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ DefaultBump = 'invalid' } } |
+            Should -Throw '*DefaultBump*'
+    }
+
+    It 'validates the effective file value rather than an overridden input' {
+        $parameters = @{
+            Inputs        = @{ DefaultBump = 'invalid' }
+            Configuration = @{ DefaultBump = 'minor' }
+        }
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration @parameters
+
+        $result.DefaultBump | Should -BeExactly 'minor'
+    }
+
+    It 'rejects null and non-string text settings instead of coercing them' -ForEach @(
+        @{ Name = 'VersionPrefix'; Value = $null }
+        @{ Name = 'VersionPrefix'; Value = 1 }
+        @{ Name = 'DatePrereleaseFormat'; Value = $false }
+        @{ Name = 'DatePrereleaseFormat'; Value = @{ format = 'yyyyMMdd' } }
+    ) {
+        { Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ $Name = $Value } } |
+            Should -Throw "*$Name*string*"
+    }
+
+    It 'rejects the retired <Name> setting with migration guidance' -ForEach @(
+        @{ Name = 'AutoPatching' }
+        @{ Name = 'IgnoreLabels' }
+        @{ Name = 'MajorLabels' }
+        @{ Name = 'MinorLabels' }
+        @{ Name = 'PatchLabels' }
+    ) {
+        { Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ $Name = 'legacy' } } |
+            Should -Throw "*$Name*removed*DefaultBump*release:*"
+    }
+
+    It 'rejects an unknown setting instead of silently ignoring a typo' {
+        { Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ DefaultBunp = 'minor' } } |
+            Should -Throw '*Unsupported release setting*DefaultBunp*'
+    }
+
+    It 'rejects a configuration root that is not a mapping' -ForEach @(
+        @{ Configuration = 'DefaultBump: minor' }
+        @{ Configuration = @('patch', 'minor') }
+        @{ Configuration = $true }
+    ) {
+        { Resolve-ReleaseConfiguration @resolveConfiguration -Configuration $Configuration } |
+            Should -Throw '*configuration must be a mapping*'
+    }
+}
+
 Describe 'Get-ReleaseLabelDefinition' {
     BeforeAll {
         $definitions = @(Get-ReleaseLabelDefinition)

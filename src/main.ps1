@@ -37,32 +37,61 @@ LogGroup 'Loading libraries' {
 }
 
 LogGroup 'Set configuration' {
-    if (-not (Test-Path -Path $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile -PathType Leaf)) {
-        Write-Output "Configuration file not found at [$env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile]"
-    } else {
-        Write-Output "Reading from configuration file [$env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile]"
-        $configuration = ConvertFrom-Yaml -Yaml (Get-Content $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile -Raw)
+    $actionDefinitionPath = Join-Path -Path $PSScriptRoot -ChildPath '..\action.yml'
+    $actionDefinition = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $actionDefinitionPath -Raw)
+    $settingNames = @(
+        'AutoCleanup'
+        'DefaultBump'
+        'CreateMajorTag'
+        'CreateMinorTag'
+        'DatePrereleaseFormat'
+        'IncrementalPrerelease'
+        'UsePRTitleAsReleaseName'
+        'UsePRBodyAsReleaseNotes'
+        'UsePRTitleAsNotesHeading'
+        'VersionPrefix'
+        'WhatIf'
+    )
+    $actionDefaults = [ordered]@{}
+    $actionInputs = @{}
+    foreach ($name in $settingNames) {
+        $actionDefaults[$name] = $actionDefinition.inputs[$name].default
+        $inputValue = [Environment]::GetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$name")
+        if ($null -ne $inputValue) {
+            $actionInputs[$name] = $inputValue
+        }
     }
 
-    $autoCleanup = ![string]::IsNullOrEmpty($configuration.AutoCleanup) ? $configuration.AutoCleanup -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup -eq 'true'
-    $defaultBump = if ($null -ne $configuration.DefaultBump) {
-        [string] $configuration.DefaultBump
-    } elseif ([string]::IsNullOrEmpty($env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump)) {
-        'patch'
-    } else {
-        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump
+    $configurationPath = [Environment]::GetEnvironmentVariable('PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile')
+    if ($null -eq $configurationPath) {
+        $configurationPath = $actionDefinition.inputs.ConfigurationFile.default
     }
-    $createMajorTag = ![string]::IsNullOrEmpty($configuration.CreateMajorTag) ? $configuration.CreateMajorTag -EQ 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_CreateMajorTag -EQ 'true'
-    $createMinorTag = ![string]::IsNullOrEmpty($configuration.CreateMinorTag) ? $configuration.CreateMinorTag -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_CreateMinorTag -eq 'true'
-    $datePrereleaseFormat = ![string]::IsNullOrEmpty($configuration.DatePrereleaseFormat) ? $configuration.DatePrereleaseFormat : $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat
-    $incrementalPrerelease = ![string]::IsNullOrEmpty($configuration.IncrementalPrerelease) ? $configuration.IncrementalPrerelease -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_IncrementalPrerelease -eq 'true'
-    $usePRBodyAsReleaseNotes = ![string]::IsNullOrEmpty($configuration.UsePRBodyAsReleaseNotes) ? $configuration.UsePRBodyAsReleaseNotes -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_UsePRBodyAsReleaseNotes -eq 'true'
-    $usePRTitleAsReleaseName = ![string]::IsNullOrEmpty($configuration.UsePRTitleAsReleaseName) ? $configuration.UsePRTitleAsReleaseName -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_UsePRTitleAsReleaseName -eq 'true'
-    $usePRTitleAsNotesHeading = ![string]::IsNullOrEmpty($configuration.UsePRTitleAsNotesHeading) ? $configuration.UsePRTitleAsNotesHeading -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_UsePRTitleAsNotesHeading -eq 'true'
-    $versionPrefix = ![string]::IsNullOrEmpty($configuration.VersionPrefix) ? $configuration.VersionPrefix : $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix
-    $whatIf = ![string]::IsNullOrEmpty($configuration.WhatIf) ? $configuration.WhatIf -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf -eq 'true'
+    if ([string]::IsNullOrWhiteSpace($configurationPath)) {
+        throw 'ConfigurationFile must be a nonempty path.'
+    }
+    $configuration = @{}
+    if (-not (Test-Path -LiteralPath $configurationPath -PathType Leaf)) {
+        Write-Output "Configuration file not found at [$configurationPath]"
+    } else {
+        Write-Output "Reading from configuration file [$configurationPath]"
+        $configuration = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $configurationPath -Raw)
+        if ($null -eq $configuration) {
+            throw "Release configuration [$configurationPath] must be a mapping of supported settings."
+        }
+    }
 
-    $null = ConvertTo-ReleaseBump -DefaultBump $defaultBump
+    $settings = Resolve-ReleaseConfiguration -Defaults $actionDefaults -Inputs $actionInputs -Configuration $configuration
+    $autoCleanup = $settings.AutoCleanup
+    $defaultBump = $settings.DefaultBump
+    $createMajorTag = $settings.CreateMajorTag
+    $createMinorTag = $settings.CreateMinorTag
+    $datePrereleaseFormat = $settings.DatePrereleaseFormat
+    $incrementalPrerelease = $settings.IncrementalPrerelease
+    $usePRBodyAsReleaseNotes = $settings.UsePRBodyAsReleaseNotes
+    $usePRTitleAsReleaseName = $settings.UsePRTitleAsReleaseName
+    $usePRTitleAsNotesHeading = $settings.UsePRTitleAsNotesHeading
+    $versionPrefix = $settings.VersionPrefix
+    $whatIf = $settings.WhatIf
 
     Write-Output '-------------------------------------------------'
     Write-Output "Auto cleanup enabled:           [$autoCleanup]"
@@ -155,8 +184,7 @@ LogGroup 'Pull request - details' {
 }
 
 LogGroup 'Pull request - Labels' {
-    $labels = @()
-    $labels += $pull_request.labels.name
+    $labels = @($pull_request.labels.name | Where-Object { $null -ne $_ })
     $labels | Format-List | Out-String
 }
 

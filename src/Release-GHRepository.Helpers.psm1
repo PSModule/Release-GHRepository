@@ -1,5 +1,113 @@
 $ErrorActionPreference = 'Stop'
 
+function Resolve-ReleaseConfiguration {
+    <#
+        .SYNOPSIS
+        Resolve validated release settings from interface defaults and overrides.
+
+        .DESCRIPTION
+        Apply action inputs over the defaults declared in action.yml, then apply
+        configuration-file settings over those inputs. Preserve explicit false
+        and empty string values. Reject invalid and retired settings before
+        repository state can change.
+
+        .EXAMPLE
+        $parameters = @{
+            Defaults      = $actionDefaults
+            Inputs        = @{ DefaultBump = 'patch' }
+            Configuration = @{ DefaultBump = 'minor' }
+        }
+        Resolve-ReleaseConfiguration @parameters
+
+        Return the effective release settings with DefaultBump set to minor.
+
+        .INPUTS
+        None
+
+        You can't pipe objects to Resolve-ReleaseConfiguration.
+
+        .OUTPUTS
+        System.Management.Automation.PSCustomObject
+
+        The validated effective release settings.
+    #>
+    [OutputType([PSCustomObject])]
+    [CmdletBinding()]
+    param(
+        # The controller input defaults from action.yml.
+        [Parameter(Mandatory)]
+        [System.Collections.IDictionary] $Defaults,
+
+        # The action inputs explicitly supplied by the runtime.
+        [Parameter()]
+        [AllowNull()]
+        [System.Collections.IDictionary] $Inputs,
+
+        # The parsed configuration file, which must be a mapping when supplied.
+        [Parameter()]
+        [AllowNull()]
+        [object] $Configuration
+    )
+
+    if ($null -ne $Configuration -and $Configuration -isnot [System.Collections.IDictionary]) {
+        throw 'Release configuration must be a mapping of supported settings.'
+    }
+
+    $retiredSettings = @('AutoPatching', 'IgnoreLabels', 'MajorLabels', 'MinorLabels', 'PatchLabels')
+    foreach ($mapping in @($Inputs, $Configuration)) {
+        if ($null -eq $mapping) {
+            continue
+        }
+        foreach ($name in $mapping.Keys) {
+            if ($retiredSettings -contains $name) {
+                throw "Release setting [$name] was removed. Use DefaultBump and the owned release: labels."
+            }
+            if ($Defaults.Keys -notcontains $name) {
+                throw "Unsupported release setting [$name]. Use the settings documented in action.yml."
+            }
+        }
+    }
+
+    $booleanSettings = @(
+        'AutoCleanup'
+        'CreateMajorTag'
+        'CreateMinorTag'
+        'IncrementalPrerelease'
+        'UsePRTitleAsReleaseName'
+        'UsePRBodyAsReleaseNotes'
+        'UsePRTitleAsNotesHeading'
+        'WhatIf'
+    )
+    $settings = [ordered]@{}
+    foreach ($name in $Defaults.Keys) {
+        $value = $Defaults[$name]
+        if ($null -ne $Inputs -and $Inputs.Contains($name)) {
+            $value = $Inputs[$name]
+        }
+        if ($null -ne $Configuration -and $Configuration.Contains($name)) {
+            $value = $Configuration[$name]
+        }
+
+        if ($booleanSettings -contains $name) {
+            if ($value -is [bool]) {
+                $settings[$name] = $value
+            } elseif ($value -is [string] -and @('true', 'false') -contains $value) {
+                $settings[$name] = $value -eq 'true'
+            } else {
+                throw "Invalid release setting [$name]. Use true or false."
+            }
+        } else {
+            if ($value -isnot [string]) {
+                throw "Invalid release setting [$name]. Use a string value."
+            }
+            $settings[$name] = $value
+        }
+    }
+
+    $null = ConvertTo-ReleaseBump -DefaultBump $settings.DefaultBump
+    [PSCustomObject] $settings
+}
+
 function Get-ReleaseLabelDefinition {
     <#
         .SYNOPSIS
@@ -368,6 +476,7 @@ Export-ModuleMember -Function @(
     'Get-PrereleaseCleanupCandidate'
     'Get-ReleaseLabelDefinition'
     'Resolve-ReleaseDecision'
+    'Resolve-ReleaseConfiguration'
     'Resolve-PullRequestReleaseContext'
     'Test-PrereleaseCreation'
 )
