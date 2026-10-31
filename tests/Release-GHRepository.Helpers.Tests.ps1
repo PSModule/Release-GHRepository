@@ -772,6 +772,21 @@ Describe 'Resolve-ReleaseDecision' {
             { Resolve-PullRequestReleaseContext -PullRequest $pullRequest } |
                 Should -Throw '*does not contain a valid prerelease identifier*'
         }
+
+        It 'allows a valid non-prerelease branch without an ASCII prerelease identifier' {
+            $headRef = ([char] 0x2603).ToString()
+            $pullRequest = [PSCustomObject]@{
+                head = [PSCustomObject]@{
+                    ref = $headRef
+                    sha = '0123456789012345678901234567890123456789'
+                }
+            }
+
+            $result = Resolve-PullRequestReleaseContext -PullRequest $pullRequest -AllowEmptyPrereleaseName
+
+            $result.HeadRef | Should -BeExactly $headRef
+            $result.PrereleaseName | Should -BeExactly ''
+        }
     }
 
     Describe 'Test-PrereleaseCreation' {

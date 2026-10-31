@@ -178,7 +178,18 @@ $actionType = $githubEvent.action
 $isMerged = ($pull_request.merged).ToString() -eq 'True'
 $prIsClosed = $pull_request.state -eq 'closed'
 $prBaseRef = $pull_request.base.ref
-$pullRequestReleaseContext = Resolve-PullRequestReleaseContext -PullRequest $pull_request
+$labels = @($pull_request.labels.name | Where-Object { $null -ne $_ })
+$decisionParameters = @{
+    Labels            = $labels
+    DefaultBump       = $defaultBump
+    DefaultBumpSource = $defaultBumpSource
+}
+$releaseDecision = Resolve-ReleaseDecision @decisionParameters
+$contextParameters = @{
+    PullRequest              = $pull_request
+    AllowEmptyPrereleaseName = (-not $releaseDecision.Prerelease)
+}
+$pullRequestReleaseContext = Resolve-PullRequestReleaseContext @contextParameters
 $prHeadRef = $pullRequestReleaseContext.HeadRef
 $prereleaseTarget = $pullRequestReleaseContext.PrereleaseTarget
 $targetIsDefaultBranch = $pull_request.base.ref -eq $defaultBranchName
@@ -200,16 +211,8 @@ LogGroup 'Pull request - details' {
 }
 
 LogGroup 'Pull request - Labels' {
-    $labels = @($pull_request.labels.name | Where-Object { $null -ne $_ })
     $labels | Format-List | Out-String
 }
-
-$decisionParameters = @{
-    Labels            = $labels
-    DefaultBump       = $defaultBump
-    DefaultBumpSource = $defaultBumpSource
-}
-$releaseDecision = Resolve-ReleaseDecision @decisionParameters
 
 $createRelease = $isMerged -and $targetIsDefaultBranch -and -not $releaseDecision.Skip
 $closedPullRequest = $prIsClosed -and -not $isMerged
@@ -441,9 +444,14 @@ if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $w
 }
 
 LogGroup 'List prereleases using the same name' {
-    $prereleasesToCleanup = @(
-        Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName $prereleaseName
-    )
+    $prereleasesToCleanup = @()
+    if ([string]::IsNullOrEmpty($prereleaseName)) {
+        Write-Output 'This branch has no prerelease identifier; cleanup has no candidates.'
+    } else {
+        $prereleasesToCleanup = @(
+            Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName $prereleaseName
+        )
+    }
     $prereleasesToCleanup | Select-Object -Property name, publishedAt, isPrerelease, isLatest | Format-Table | Out-String
 }
 

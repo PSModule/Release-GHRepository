@@ -476,7 +476,11 @@ function Resolve-PullRequestReleaseContext {
     param(
         # The pull request from the GitHub event payload.
         [Parameter(Mandatory)]
-        [PSCustomObject] $PullRequest
+        [PSCustomObject] $PullRequest,
+
+        # Permit non-prerelease contexts whose branch cannot name a prerelease.
+        [Parameter()]
+        [switch] $AllowEmptyPrereleaseName
     )
 
     $headRef = [string] $PullRequest.head.ref
@@ -493,7 +497,7 @@ function Resolve-PullRequestReleaseContext {
     }
 
     $prereleaseName = $headRef -replace '[^a-zA-Z0-9]'
-    if ([string]::IsNullOrWhiteSpace($prereleaseName)) {
+    if ([string]::IsNullOrWhiteSpace($prereleaseName) -and -not $AllowEmptyPrereleaseName) {
         throw "Pull request head ref [$headRef] does not contain a valid prerelease identifier."
     }
 

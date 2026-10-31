@@ -256,6 +256,19 @@ VersionPrefix: v
         Should -Invoke Write-GitHubNotice -Times 0 -Exactly
     }
 
+    It 'validates a skipped branch even when it has no ASCII prerelease identifier' {
+        $githubEvent.pull_request.head.ref = ([char] 0x2603).ToString()
+        $githubEvent.pull_request.labels = @(@{ name = 'release:skip' })
+        $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'Skip release:\s+\[True\]'
+        $output | Should -Match 'no prerelease identifier'
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
     It 'targets a prerelease at the exact pull-request head without executing publication commands' {
         $githubEvent.pull_request.labels = @(@{ name = 'release:prerelease' }, @{ name = 'release:minor' })
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
@@ -267,6 +280,24 @@ VersionPrefix: v
         $output | Should -Match 'WhatIf: gh pr comment 42 '
         Should -Invoke gh -Times 2 -Exactly
         Should -Invoke git -Times 0 -Exactly
+    }
+
+    Describe 'Publication concurrency settings' {
+        BeforeAll {
+            $workflowPath = Join-Path -Path $PSScriptRoot -ChildPath '..\.github\workflows\Release.yml'
+            $releaseWorkflow = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $workflowPath -Raw)
+        }
+
+        It 'never cancels an in-progress publication run' {
+            $releaseWorkflow.concurrency.'cancel-in-progress' | Should -BeFalse
+        }
+
+        It 'serializes merged pull requests by target branch and isolates open pull requests by number' {
+            $releaseWorkflow.concurrency.group | Should -BeExactly (
+                '${{ github.workflow }}-${{ github.event.pull_request.merged && github.event.pull_request.base.ref || ' +
+                'github.event.pull_request.number || github.ref }}'
+            )
+        }
     }
 
     It 'rejects conflicting owned labels instead of falling back to the default' {
