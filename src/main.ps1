@@ -243,17 +243,22 @@ LogGroup 'Get releases' {
     $releases | Select-Object -Property name, isPrerelease, isLatest, publishedAt | Format-Table | Out-String
 }
 
-LogGroup 'Get latest version' {
-    $latestRelease = $releases | Where-Object { $_.isLatest -eq $true }
-    $latestRelease | Format-List | Out-String
-    $latestVersionString = $latestRelease.tagName
-    if (![string]::IsNullOrEmpty($latestVersionString)) {
-        $latestVersion = $latestVersionString | ConvertTo-PSSemVer
-        Write-Output '-------------------------------------------------'
-        Write-Output 'Latest version:'
-        $latestVersion | Format-Table
-        $latestVersion = $latestVersion.ToString()
+$latestVersion = $null
+if (-not $releaseDecision.Skip) {
+    LogGroup 'Get latest version' {
+        $latestRelease = $releases | Where-Object { $_.isLatest -eq $true }
+        $latestRelease | Format-List | Out-String
+        $latestVersionString = $latestRelease.tagName
+        if (![string]::IsNullOrEmpty($latestVersionString)) {
+            $latestVersion = $latestVersionString | ConvertTo-PSSemVer
+            Write-Output '-------------------------------------------------'
+            Write-Output 'Latest version:'
+            $latestVersion | Format-Table
+            $latestVersion = $latestVersion.ToString()
+        }
     }
+} else {
+    Write-Output 'Skip selected; no release version is resolved.'
 }
 
 Write-Output '-------------------------------------------------'

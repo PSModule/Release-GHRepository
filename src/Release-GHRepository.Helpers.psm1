@@ -238,9 +238,9 @@ function Get-PrereleaseCleanupCandidate {
         Return prereleases that belong to a pull-request prerelease identifier.
 
         .DESCRIPTION
-        Select only releases marked as prereleases whose tag contains the exact
-        prerelease identifier immediately after the SemVer hyphen. The identifier
-        must end the tag or be followed by a dot.
+        Select only releases marked as prereleases whose first version core is
+        followed by the exact case-sensitive prerelease identifier. The identifier
+        must end the tag or be followed by a dot; later hyphens never select it.
 
         .EXAMPLE
         Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName 'feature123'
@@ -273,11 +273,20 @@ function Get-PrereleaseCleanupCandidate {
     )
 
     $escapedPrereleaseName = [regex]::Escape($PrereleaseName)
-    $tagPattern = "-$escapedPrereleaseName(?:\.|$)"
+    $identifierPattern = "\A$escapedPrereleaseName(?:\.|\z)"
+    $versionPattern = '\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-\z'
 
     $Releases | Where-Object {
-        $_.isPrerelease -eq $true -and
-        [string] $_.tagName -match $tagPattern
+        if ($_.isPrerelease -ne $true) {
+            return $false
+        }
+        $tagName = [string] $_.tagName
+        $separator = [regex]::Match($tagName, '[0-9]+\.[0-9]+\.[0-9]+-')
+        if (-not $separator.Success -or $separator.Value -cnotmatch $versionPattern) {
+            return $false
+        }
+        $identifier = $tagName.Substring($separator.Index + $separator.Length)
+        $identifier -cmatch $identifierPattern
     }
 }
 

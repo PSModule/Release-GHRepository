@@ -78,6 +78,7 @@ Describe 'Release-GHRepository caller compatibility' {
         }
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 
+        $releaseRecordsJson = '[{"tagName":"v2.0.3","isLatest":true,"isPrerelease":false}]'
         Mock Install-PSResource {}
         Mock Write-GitHubNotice {}
         Mock git { throw 'A caller compatibility test must never invoke git.' }
@@ -86,7 +87,7 @@ Describe 'Release-GHRepository caller compatibility' {
             if ($args[0] -eq 'repo' -and $args[1] -eq 'view') {
                 '{"defaultBranchRef":{"name":"main"}}'
             } elseif ($args[0] -eq 'release' -and $args[1] -eq 'list') {
-                '[{"tagName":"v2.0.3","isLatest":true,"isPrerelease":false}]'
+                $releaseRecordsJson
             } else {
                 throw "A caller compatibility test must never mutate GitHub: gh $($args -join ' ')"
             }
@@ -265,6 +266,25 @@ VersionPrefix: v
 
         $output | Should -Match 'Skip release:\s+\[True\]'
         $output | Should -Match 'no prerelease identifier'
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'validates a closed skip without parsing a malformed latest version while retaining cleanup' {
+        $releaseRecordsJson = @'
+[{"tagName":"not-a-semver","isLatest":true,"isPrerelease":false},{"tagName":"v2.0.4-featurecaller.1","isLatest":false,"isPrerelease":true}]
+'@
+        $githubEvent.pull_request.labels = @(@{ name = 'release:skip' })
+        $githubEvent.pull_request.merged = $true
+        $githubEvent.pull_request.state = 'closed'
+        $githubEvent.action = 'closed'
+        $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'Skipping release creation\.'
+        $output | Should -Match 'WhatIf: gh release delete v2\.0\.4-featurecaller\.1'
+        $output | Should -Not -Match 'gh release create|git tag|git push'
         Should -Invoke gh -Times 2 -Exactly
         Should -Invoke git -Times 0 -Exactly
     }

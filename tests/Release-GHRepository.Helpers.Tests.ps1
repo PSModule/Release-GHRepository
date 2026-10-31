@@ -393,6 +393,52 @@ Describe 'Get-PrereleaseCleanupCandidate' {
         $result.tagName | Should -Be @('v1.2.3-feature.test.1')
     }
 
+    It 'never matches a name after the first SemVer prerelease separator' {
+        $tagNames = @(
+            'v1.2.3-other-feature.1'
+            'v1.2.3-other.1-feature.2'
+            'v1.2.3-other-v4.5.6-feature.1'
+            'v1.2.3-feature.1'
+        )
+        $records = @($tagNames | ForEach-Object { [PSCustomObject]@{ tagName = $_; isPrerelease = $true } })
+
+        $result = @(Get-PrereleaseCleanupCandidate -Releases $records -PrereleaseName 'feature')
+
+        $result.tagName | Should -Be @('v1.2.3-feature.1')
+    }
+
+    It 'distinguishes case-sensitive branch identifiers' {
+        $records = @(
+            [PSCustomObject]@{ tagName = 'v1.2.3-Feature.1'; isPrerelease = $true }
+            [PSCustomObject]@{ tagName = 'v1.2.3-feature.1'; isPrerelease = $true }
+        )
+
+        $result = @(Get-PrereleaseCleanupCandidate -Releases $records -PrereleaseName 'Feature')
+
+        $result.tagName | Should -Be @('v1.2.3-Feature.1')
+    }
+
+    It 'ignores non-version tags and invalid version cores' {
+        $records = @(
+            [PSCustomObject]@{ tagName = 'notes-feature.1'; isPrerelease = $true }
+            [PSCustomObject]@{ tagName = 'v01.2.3-feature.1'; isPrerelease = $true }
+        )
+
+        @(Get-PrereleaseCleanupCandidate -Releases $records -PrereleaseName 'feature') |
+            Should -BeNullOrEmpty
+    }
+
+    It 'retains cleanup across empty and hyphenated version prefixes' {
+        $records = @(
+            [PSCustomObject]@{ tagName = '1.2.3-feature.1'; isPrerelease = $true }
+            [PSCustomObject]@{ tagName = 'release-v1.2.3-feature.2'; isPrerelease = $true }
+        )
+
+        $result = @(Get-PrereleaseCleanupCandidate -Releases $records -PrereleaseName 'feature')
+
+        $result.tagName | Should -Be @('1.2.3-feature.1', 'release-v1.2.3-feature.2')
+    }
+
     It 'returns no candidates for an empty release list' {
         $result = @(Get-PrereleaseCleanupCandidate -Releases @() -PrereleaseName 'feature')
 
