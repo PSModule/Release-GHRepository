@@ -2,6 +2,8 @@
 
 Create GitHub releases from owned pull-request labels and a configurable default bump.
 
+This action is for repository and workflow maintainers who publish GitHub releases through the `action.yml` input interface and version-controlled release settings.
+
 ## Release decision
 
 Release-GHRepository owns and provisions five labels:
@@ -71,8 +73,10 @@ jobs:
           persist-credentials: false
 
       - name: Release repository
-        uses: PSModule/Release-GHRepository@v3
+        uses: PSModule/Release-GHRepository@<released-commit-sha>
 ```
+
+Select the full immutable commit SHA of an authorized, published release that supports this contract. An open pull request's head is a development candidate, not a production dependency. A controlled major tag is an option only when the producer's release automation exclusively maintains it within its compatible stable line.
 
 The `pull_request_target` workflow checks out the trusted base branch. Do not check out or execute an untrusted pull-request head with this writable token.
 
@@ -81,7 +85,8 @@ The `pull_request_target` workflow checks out the trusted base branch. Do not ch
 | Name | Description | Default | Required |
 | --- | --- | --- | --- |
 | `AutoCleanup` | Delete prereleases after the pull request closes. | `true` | false |
-| `ConfigurationFile` | Read settings from this file. File settings take precedence over action inputs. | `.github\auto-release.yml` | false |
+| `CallerOverrides` | Supply a YAML or JSON mapping of explicit invocation overrides. These override repository settings. | `{}` | false |
+| `ConfigurationFile` | Read repository settings from this file. File values override scalar action inputs, but not `CallerOverrides`. | `.github\auto-release.yml` | false |
 | `DefaultBump` | Select the bump when no explicit bump or skip label exists. Accepts exactly `patch`, `minor`, or `major` with case-sensitive matching. | `patch` | false |
 | `CreateMajorTag` | Create or update the floating major tag after a stable release. | `true` | false |
 | `CreateMinorTag` | Create or update the floating minor tag after a stable release. | `true` | false |
@@ -104,6 +109,12 @@ Use the `release:prerelease` label to select repository prerelease behavior. The
 
 The default configuration file is `.github\auto-release.yml`. Change its path with `ConfigurationFile`.
 
+Settings resolve in this order: defaults declared in `action.yml`, scalar action inputs, repository settings, then explicit `CallerOverrides`. Scalar inputs retain the existing file-over-input behavior because GitHub injects their defaults even when callers omit them. Use `CallerOverrides` for an invocation-specific override; its omitted `{}` mapping inherits repository settings without masking them.
+
+An explicit `false` or empty string is an override, not an omitted setting. Booleans accept YAML `true` and `false` or case-insensitive strings containing exactly `true` or `false`. Text settings require strings; only `VersionPrefix` and `DatePrereleaseFormat` accept empty strings. Every supplied layer is validated before merging, so a valid override cannot hide an invalid lower-priority value.
+
+The file and `CallerOverrides` must contain mappings. They accept the release settings from `AutoCleanup` through `WhatIf` in the input table, excluding `CallerOverrides` and `ConfigurationFile` themselves. The dependency/runtime inputs (`Debug`, `Verbose`, `Version`, `Prerelease`, and `WorkingDirectory`) are supplied separately by the caller. Unknown keys, removed keys, null values, and invalid values fail before label provisioning.
+
 ```yaml
 DatePrereleaseFormat: 'yyyyMMddHHmm'
 DefaultBump: patch
@@ -111,17 +122,26 @@ IncrementalPrerelease: false
 VersionPrefix: ''
 ```
 
-## Migrate from v2
+For an invocation-specific minor bump, even when the repository configures major:
 
-`v3` is a breaking release. Existing `v2` references and behavior remain unchanged.
+```yaml
+with:
+  CallerOverrides: |
+    DefaultBump: minor
+    AutoCleanup: false
+    VersionPrefix: ''
+```
 
-1. Add `issues: write` to the release job and subscribe the workflow to `unlabeled`.
-2. Remove workflow path filters so `release:skip` decisions are validated.
-3. Replace `AutoPatching` with `DefaultBump`. Use `DefaultBump: patch` to preserve the v2 `AutoPatching: true` behavior. Remove `IgnoreLabels`, `MajorLabels`, `MinorLabels`, and `PatchLabels`.
-4. Provision the five canonical labels before opening the migration pull request. The action reconciles them on every subsequent run.
-5. Apply both the existing v2 decision and the equivalent canonical decision to the migration pull request so either workflow version can process it.
-6. Update the action reference to `PSModule/Release-GHRepository@v3` after `v3.0.0` is published.
-7. Apply one canonical decision to every other open pull request.
-8. Remove legacy release labels after no open pull request uses them. Removing bare `major`, `minor`, and `patch` labels also prevents Dependabot from applying them as dependency-version metadata.
+JSON mappings are supported too, such as `CallerOverrides: '{"DefaultBump":"minor"}'`. An explicit owned bump label still overrides the valid effective `DefaultBump`. The action reports whether the bump came from an owned label, explicit caller override, repository setting, scalar base input, or shared default.
 
-The first v3 run provisions the canonical labels before processing the pull request. A pull request without an owned bump or skip label uses `DefaultBump`; a maintainer applies an owned label only to override that default or skip publication.
+`DatePrereleaseFormat` formats only the existing prerelease suffix. `DefaultBump` does not support date versioning or a disabled automatic bump. Use `release:skip` when validation must succeed without publication.
+
+## Release records
+
+The release-bound pull request's title and complete body contain the incremental adoption instructions, changed consumer interfaces, verification evidence, and resolved release decision. Compose those records across the release range you adopt; repository guides do not replace them.
+
+The [owned-label release record](https://github.com/PSModule/Release-GHRepository/pull/109) contains the caller migration and publisher bootstrap requirements for this contract.
+
+## Contributing
+
+Follow the [MSX coding standards](https://msxorg.github.io/docs/Coding-Standards/) and [contribution workflow](https://msxorg.github.io/docs/Ways-of-Working/Contribution-Workflow/). Keep release-decision changes separate from changes to stable-publication authority and recovery.

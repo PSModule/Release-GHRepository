@@ -80,9 +80,24 @@ LogGroup 'Set configuration' {
         }
     }
 
-    $settings = Resolve-ReleaseConfiguration -Defaults $actionDefaults -Inputs $actionInputs -Configuration $configuration
+    $callerOverridesYaml = [Environment]::GetEnvironmentVariable('PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides')
+    if ($null -eq $callerOverridesYaml) {
+        $callerOverridesYaml = $actionDefinition.inputs.CallerOverrides.default
+    }
+    $callerOverrides = ConvertFrom-Yaml -Yaml $callerOverridesYaml
+    if ($callerOverrides -isnot [System.Collections.IDictionary]) {
+        throw 'CallerOverrides must be a mapping of supported release settings.'
+    }
+    $configurationParameters = @{
+        Defaults        = $actionDefaults
+        Inputs          = $actionInputs
+        Configuration   = $configuration
+        CallerOverrides = $callerOverrides
+    }
+    $settings = Resolve-ReleaseConfiguration @configurationParameters
     $autoCleanup = $settings.AutoCleanup
     $defaultBump = $settings.DefaultBump
+    $defaultBumpSource = $settings.DefaultBumpSource
     $createMajorTag = $settings.CreateMajorTag
     $createMinorTag = $settings.CreateMinorTag
     $datePrereleaseFormat = $settings.DatePrereleaseFormat
@@ -96,6 +111,7 @@ LogGroup 'Set configuration' {
     Write-Output '-------------------------------------------------'
     Write-Output "Auto cleanup enabled:           [$autoCleanup]"
     Write-Output "Default bump:                   [$defaultBump]"
+    Write-Output "Default bump source:            [$defaultBumpSource]"
     Write-Output "Create major tag enabled:       [$createMajorTag]"
     Write-Output "Create minor tag enabled:       [$createMinorTag]"
     Write-Output "Date-based prerelease format:   [$datePrereleaseFormat]"
@@ -188,7 +204,12 @@ LogGroup 'Pull request - Labels' {
     $labels | Format-List | Out-String
 }
 
-$releaseDecision = Resolve-ReleaseDecision -Labels $labels -DefaultBump $defaultBump
+$decisionParameters = @{
+    Labels            = $labels
+    DefaultBump       = $defaultBump
+    DefaultBumpSource = $defaultBumpSource
+}
+$releaseDecision = Resolve-ReleaseDecision @decisionParameters
 
 $createRelease = $isMerged -and $targetIsDefaultBranch -and -not $releaseDecision.Skip
 $closedPullRequest = $prIsClosed -and -not $isMerged
@@ -201,6 +222,7 @@ $patchRelease = $releaseDecision.Bump -eq 'Patch'
 
 Write-Output '-------------------------------------------------'
 Write-Output "Default bump applied:           [$($releaseDecision.DefaultBumpApplied)]"
+Write-Output "Bump source:                    [$($releaseDecision.BumpSource)]"
 Write-Output "Skip release:                   [$($releaseDecision.Skip)]"
 Write-Output "Create a release:               [$createRelease]"
 Write-Output "Create a prerelease:            [$createPrerelease]"

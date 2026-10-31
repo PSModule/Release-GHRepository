@@ -45,7 +45,8 @@ Describe 'Resolve-ReleaseConfiguration' {
             WhatIf                   = $false
         }
 
-        $result.PSObject.Properties.Name | Should -Be @($expected.Keys)
+        $result.PSObject.Properties.Name | Should -Be (@($expected.Keys) + 'DefaultBumpSource')
+        $result.DefaultBumpSource | Should -BeExactly 'SharedDefault'
         foreach ($name in $expected.Keys) {
             $result.$name | Should -Be $expected[$name] -Because "[$name] has a documented default"
             $result.$name.GetType() | Should -Be $expected[$name].GetType()
@@ -155,14 +156,91 @@ Describe 'Resolve-ReleaseConfiguration' {
             Should -Throw '*DefaultBump*'
     }
 
-    It 'validates the effective file value rather than an overridden input' {
+    It 'rejects an invalid input even when a valid file value overrides it' {
         $parameters = @{
             Inputs        = @{ DefaultBump = 'invalid' }
             Configuration = @{ DefaultBump = 'minor' }
         }
+        { Resolve-ReleaseConfiguration @resolveConfiguration @parameters } |
+            Should -Throw '*DefaultBump*'
+    }
+
+    It 'lets explicit caller overrides take precedence over repository settings' {
+        $parameters = @{
+            Inputs          = @{ DefaultBump = 'patch' }
+            Configuration   = @{ DefaultBump = 'major' }
+            CallerOverrides = @{ DefaultBump = 'minor' }
+        }
+
         $result = Resolve-ReleaseConfiguration @resolveConfiguration @parameters
 
         $result.DefaultBump | Should -BeExactly 'minor'
+        $result.DefaultBumpSource | Should -BeExactly 'CallerOverride'
+    }
+
+    It 'does not let injected scalar defaults mask repository settings when overrides are empty' {
+        $parameters = @{
+            Inputs          = @{ DefaultBump = 'patch' }
+            Configuration   = @{ DefaultBump = 'major' }
+            CallerOverrides = @{}
+        }
+
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration @parameters
+
+        $result.DefaultBump | Should -BeExactly 'major'
+        $result.DefaultBumpSource | Should -BeExactly 'RepositorySetting'
+    }
+
+    It 'records a nondefault scalar input as a base input rather than an explicit caller override' {
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ DefaultBump = 'minor' }
+
+        $result.DefaultBump | Should -BeExactly 'minor'
+        $result.DefaultBumpSource | Should -BeExactly 'ActionInput'
+    }
+
+    It 'preserves explicit false and empty text caller overrides' {
+        $parameters = @{
+            Configuration   = @{ AutoCleanup = $true; VersionPrefix = 'v'; DatePrereleaseFormat = 'yyyyMMdd' }
+            CallerOverrides = @{ AutoCleanup = $false; VersionPrefix = ''; DatePrereleaseFormat = '' }
+        }
+
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration @parameters
+
+        $result.AutoCleanup | Should -BeFalse
+        $result.VersionPrefix | Should -BeExactly ''
+        $result.DatePrereleaseFormat | Should -BeExactly ''
+    }
+
+    It 'rejects an invalid repository value even when the caller supplies a valid override' {
+        $parameters = @{
+            Configuration   = @{ DefaultBump = 'invalid' }
+            CallerOverrides = @{ DefaultBump = 'patch' }
+        }
+
+        { Resolve-ReleaseConfiguration @resolveConfiguration @parameters } |
+            Should -Throw '*DefaultBump*'
+    }
+
+    It 'rejects caller override settings [<Name>]' -ForEach @(
+        @{ Name = 'DefaultBump'; Value = ''; Message = '*DefaultBump*' }
+        @{ Name = 'DefaultBump'; Value = $null; Message = '*DefaultBump*' }
+        @{ Name = 'DefaultBump'; Value = 'date'; Message = '*DefaultBump*' }
+        @{ Name = 'AutoCleanup'; Value = 'invalid'; Message = '*AutoCleanup*true or false*' }
+        @{ Name = 'VersionPrefix'; Value = $null; Message = '*VersionPrefix*string*' }
+        @{ Name = 'AutoPatching'; Value = $true; Message = '*AutoPatching*removed*' }
+        @{ Name = 'DefaultBunp'; Value = 'minor'; Message = '*Unsupported release setting*' }
+    ) {
+        { Resolve-ReleaseConfiguration @resolveConfiguration -CallerOverrides @{ $Name = $Value } } |
+            Should -Throw $Message
+    }
+
+    It 'rejects a supplied caller override root that is not a mapping' -ForEach @(
+        @{ Overrides = $null }
+        @{ Overrides = '' }
+        @{ Overrides = @('patch', 'minor') }
+    ) {
+        { Resolve-ReleaseConfiguration @resolveConfiguration -CallerOverrides $Overrides } |
+            Should -Throw '*CallerOverrides must be a mapping*'
     }
 
     It 'rejects null and non-string text settings instead of coercing them' -ForEach @(
@@ -173,6 +251,11 @@ Describe 'Resolve-ReleaseConfiguration' {
     ) {
         { Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ $Name = $Value } } |
             Should -Throw "*$Name*string*"
+    }
+
+    It 'rejects an invalid prerelease date format before publication is considered' {
+        { Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ DatePrereleaseFormat = '%' } } |
+            Should -Throw '*DatePrereleaseFormat*format*'
     }
 
     It 'rejects the retired <Name> setting with migration guidance' -ForEach @(
@@ -659,6 +742,23 @@ Describe 'Resolve-ReleaseDecision' {
 
             { Resolve-PullRequestReleaseContext -PullRequest $pullRequest } |
                 Should -Throw '*head SHA is required*'
+        }
+
+        It 'rejects a mutable or malformed head SHA [<HeadSha>]' -ForEach @(
+            @{ HeadSha = 'main' }
+            @{ HeadSha = 'abcdef' }
+            @{ HeadSha = '012345678901234567890123456789012345678g' }
+            @{ HeadSha = "0123456789012345678901234567890123456789`n" }
+        ) {
+            $pullRequest = [PSCustomObject]@{
+                head = [PSCustomObject]@{
+                    ref = 'feature/invalid-sha'
+                    sha = $HeadSha
+                }
+            }
+
+            { Resolve-PullRequestReleaseContext -PullRequest $pullRequest } |
+                Should -Throw '*head SHA must be a 40-character hexadecimal commit*'
         }
 
         It 'rejects a head ref that has no valid prerelease identifier' {

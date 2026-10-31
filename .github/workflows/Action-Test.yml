@@ -57,3 +57,5 @@ jobs:
         uses: ./
         with:
           WhatIf: true
+          CallerOverrides: |
+            WhatIf: true

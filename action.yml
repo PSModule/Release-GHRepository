@@ -1,5 +1,5 @@
 name: Release GHRepository (by PSModule)
-description: Automatically creates releases based on pull requests and labels.
+description: Creates GitHub releases from owned pull-request labels and effective release settings.
 author: PSModule
 branding:
   icon: upload-cloud
@@ -7,11 +7,19 @@ branding:
 
 inputs:
   AutoCleanup:
-    description: Control whether to automatically delete the prerelease tags after the stable release is created.
+    description: Delete pull-request prereleases and their tags after the pull request closes.
     required: false
     default: 'true'
+  CallerOverrides:
+    description: >-
+      A YAML or JSON mapping of explicit release-setting overrides. Overrides repository settings
+      without confusing omitted inputs with action defaults.
+    required: false
+    default: '{}'
   ConfigurationFile:
-    description: The path to the configuration file. Settings in the configuration file take precedence over the action inputs.
+    description: >-
+      The repository settings file. File values override scalar action inputs;
+      explicit CallerOverrides take precedence over file values.
     required: false
     default: .github\auto-release.yml
   DefaultBump:
@@ -51,7 +59,7 @@ inputs:
     required: false
     default: v
   WhatIf:
-    description: If specified, the action will only log the changes it would make, but will not actually create or delete any releases or tags.
+    description: Log planned label, release, tag, and comment changes without mutating repository state.
     required: false
     default: 'false'
   Debug:
@@ -81,6 +89,7 @@ runs:
       uses: PSModule/GitHub-Script@8083ec1f733f00357ee4d0db0c6056686e483bc0 # v1.9.0
       env:
         PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup: ${{ inputs.AutoCleanup }}
+        PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides: ${{ inputs.CallerOverrides }}
         PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile: ${{ inputs.ConfigurationFile }}
         PSMODULE_AUTO_RELEASE_INPUT_DefaultBump: ${{ inputs.DefaultBump }}
         PSMODULE_AUTO_RELEASE_INPUT_CreateMajorTag: ${{ inputs.CreateMajorTag }}

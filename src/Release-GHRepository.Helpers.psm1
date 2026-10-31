@@ -1,21 +1,101 @@
 $ErrorActionPreference = 'Stop'
 
+function ConvertTo-ReleaseSettingValue {
+    <#
+        .SYNOPSIS
+        Validate and convert one supplied release-setting value.
+
+        .DESCRIPTION
+        Preserve valid text values, normalize booleans, and validate default
+        bumps and prerelease date formats before settings are combined.
+
+        .EXAMPLE
+        ConvertTo-ReleaseSettingValue -Name 'AutoCleanup' -Value 'false'
+
+        Return the Boolean false value.
+
+        .INPUTS
+        None
+
+        You can't pipe objects to ConvertTo-ReleaseSettingValue.
+
+        .OUTPUTS
+        System.Boolean
+
+        A validated Boolean setting.
+
+        .OUTPUTS
+        System.String
+
+        A validated text setting.
+    #>
+    [OutputType([bool], [string])]
+    [CmdletBinding()]
+    param(
+        # The supported release-setting name.
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Name,
+
+        # The supplied value, including null so invalid values can be diagnosed.
+        [Parameter(Mandatory)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [object] $Value
+    )
+
+    $booleanSettings = @(
+        'AutoCleanup'
+        'CreateMajorTag'
+        'CreateMinorTag'
+        'IncrementalPrerelease'
+        'UsePRTitleAsReleaseName'
+        'UsePRBodyAsReleaseNotes'
+        'UsePRTitleAsNotesHeading'
+        'WhatIf'
+    )
+    if ($booleanSettings -contains $Name) {
+        if ($Value -is [bool]) {
+            $Value
+        } elseif ($Value -is [string] -and @('true', 'false') -contains $Value) {
+            $Value -eq 'true'
+        } else {
+            throw "Invalid release setting [$Name]. Use true or false."
+        }
+        return
+    }
+    if ($Value -isnot [string]) {
+        throw "Invalid release setting [$Name]. Use a string value."
+    }
+    if ($Name -eq 'DefaultBump') {
+        $null = ConvertTo-ReleaseBump -DefaultBump $Value
+    }
+    if ($Name -eq 'DatePrereleaseFormat' -and -not [string]::IsNullOrEmpty($Value)) {
+        try {
+            $null = [datetime]::new(2000, 1, 1).ToString($Value, [Globalization.CultureInfo]::InvariantCulture)
+        } catch [FormatException] {
+            throw 'Invalid DatePrereleaseFormat. Use a valid .NET date and time format string.'
+        }
+    }
+    $Value
+}
+
 function Resolve-ReleaseConfiguration {
     <#
         .SYNOPSIS
         Resolve validated release settings from interface defaults and overrides.
 
         .DESCRIPTION
-        Apply action inputs over the defaults declared in action.yml, then apply
-        configuration-file settings over those inputs. Preserve explicit false
-        and empty string values. Reject invalid and retired settings before
-        repository state can change.
+        Apply scalar action inputs over defaults declared in action.yml, then
+        repository settings, then explicit CallerOverrides. Validate every
+        supplied layer so invalid values cannot be masked. Preserve false and
+        empty text overrides and record the effective default-bump source.
 
         .EXAMPLE
         $parameters = @{
-            Defaults      = $actionDefaults
-            Inputs        = @{ DefaultBump = 'patch' }
-            Configuration = @{ DefaultBump = 'minor' }
+            Defaults        = $actionDefaults
+            Configuration   = @{ DefaultBump = 'major' }
+            CallerOverrides = @{ DefaultBump = 'minor' }
         }
         Resolve-ReleaseConfiguration @parameters
 
@@ -46,65 +126,54 @@ function Resolve-ReleaseConfiguration {
         # The parsed configuration file, which must be a mapping when supplied.
         [Parameter()]
         [AllowNull()]
-        [object] $Configuration
+        [object] $Configuration,
+
+        # Explicit invocation overrides, distinct from injected scalar defaults.
+        [Parameter()]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [object] $CallerOverrides
     )
 
     if ($null -ne $Configuration -and $Configuration -isnot [System.Collections.IDictionary]) {
         throw 'Release configuration must be a mapping of supported settings.'
     }
+    if ($PSBoundParameters.ContainsKey('CallerOverrides') -and $CallerOverrides -isnot [System.Collections.IDictionary]) {
+        throw 'CallerOverrides must be a mapping of supported release settings.'
+    }
 
     $retiredSettings = @('AutoPatching', 'IgnoreLabels', 'MajorLabels', 'MinorLabels', 'PatchLabels')
-    foreach ($mapping in @($Inputs, $Configuration)) {
-        if ($null -eq $mapping) {
+    $layers = @(
+        [PSCustomObject]@{ Source = 'SharedDefault'; Values = $Defaults }
+        [PSCustomObject]@{ Source = 'ActionInput'; Values = $Inputs }
+        [PSCustomObject]@{ Source = 'RepositorySetting'; Values = $Configuration }
+        [PSCustomObject]@{ Source = 'CallerOverride'; Values = $CallerOverrides }
+    )
+    $settings = [ordered]@{}
+    $defaultBumpSource = 'SharedDefault'
+    foreach ($layer in $layers) {
+        if ($null -eq $layer.Values) {
             continue
         }
-        foreach ($name in $mapping.Keys) {
+        foreach ($name in $layer.Values.Keys) {
             if ($retiredSettings -contains $name) {
                 throw "Release setting [$name] was removed. Use DefaultBump and the owned release: labels."
             }
             if ($Defaults.Keys -notcontains $name) {
                 throw "Unsupported release setting [$name]. Use the settings documented in action.yml."
             }
-        }
-    }
-
-    $booleanSettings = @(
-        'AutoCleanup'
-        'CreateMajorTag'
-        'CreateMinorTag'
-        'IncrementalPrerelease'
-        'UsePRTitleAsReleaseName'
-        'UsePRBodyAsReleaseNotes'
-        'UsePRTitleAsNotesHeading'
-        'WhatIf'
-    )
-    $settings = [ordered]@{}
-    foreach ($name in $Defaults.Keys) {
-        $value = $Defaults[$name]
-        if ($null -ne $Inputs -and $Inputs.Contains($name)) {
-            $value = $Inputs[$name]
-        }
-        if ($null -ne $Configuration -and $Configuration.Contains($name)) {
-            $value = $Configuration[$name]
-        }
-
-        if ($booleanSettings -contains $name) {
-            if ($value -is [bool]) {
-                $settings[$name] = $value
-            } elseif ($value -is [string] -and @('true', 'false') -contains $value) {
-                $settings[$name] = $value -eq 'true'
-            } else {
-                throw "Invalid release setting [$name]. Use true or false."
+            $settings[$name] = ConvertTo-ReleaseSettingValue -Name $name -Value $layer.Values[$name]
+            if ($name -eq 'DefaultBump') {
+                $defaultBumpSource = $layer.Source
+                if ($layer.Source -eq 'ActionInput' -and $layer.Values[$name] -ceq $Defaults[$name]) {
+                    $defaultBumpSource = 'SharedDefault'
+                }
             }
-        } else {
-            if ($value -isnot [string]) {
-                throw "Invalid release setting [$name]. Use a string value."
-            }
-            $settings[$name] = $value
         }
     }
 
     $null = ConvertTo-ReleaseBump -DefaultBump $settings.DefaultBump
+    $settings.DefaultBumpSource = $defaultBumpSource
     [PSCustomObject] $settings
 }
 
@@ -307,7 +376,12 @@ function Resolve-ReleaseDecision {
         [Parameter()]
         [AllowNull()]
         [AllowEmptyString()]
-        [string] $DefaultBump = 'patch'
+        [string] $DefaultBump = 'patch',
+
+        # The validated settings layer that supplies the effective default.
+        [Parameter()]
+        [ValidateSet('SharedDefault', 'ActionInput', 'RepositorySetting', 'CallerOverride')]
+        [string] $DefaultBumpSource = 'SharedDefault'
     )
 
     $resolvedDefaultBump = ConvertTo-ReleaseBump -DefaultBump $DefaultBump
@@ -341,6 +415,7 @@ function Resolve-ReleaseDecision {
             Prerelease         = $false
             Skip               = $true
             DefaultBumpApplied = $false
+            BumpSource         = 'release:skip'
         }
         return
     }
@@ -361,6 +436,7 @@ function Resolve-ReleaseDecision {
         Prerelease         = $hasPrerelease
         Skip               = $false
         DefaultBumpApplied = $defaultBumpApplied
+        BumpSource         = if ($defaultBumpApplied) { $DefaultBumpSource } else { $bumpLabels[0] }
     }
 }
 
@@ -411,6 +487,9 @@ function Resolve-PullRequestReleaseContext {
     }
     if ([string]::IsNullOrWhiteSpace($headSha)) {
         throw 'Pull request head SHA is required.'
+    }
+    if ($headSha -notmatch '\A[0-9a-fA-F]{40}\z') {
+        throw 'Pull request head SHA must be a 40-character hexadecimal commit.'
     }
 
     $prereleaseName = $headRef -replace '[^a-zA-Z0-9]'

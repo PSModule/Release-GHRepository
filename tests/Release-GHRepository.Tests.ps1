@@ -37,6 +37,7 @@ Describe 'Release-GHRepository caller compatibility' {
             'GITHUB_REPOSITORY'
             'GITHUB_EVENT_PATH'
             'PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile'
+            'PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides'
             'PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup'
             'PSMODULE_AUTO_RELEASE_INPUT_DefaultBump'
             'PSMODULE_AUTO_RELEASE_INPUT_CreateMajorTag'
@@ -59,7 +60,8 @@ Describe 'Release-GHRepository caller compatibility' {
 
         $env:GITHUB_REPOSITORY = 'example/repository'
         $env:GITHUB_EVENT_PATH = Join-Path -Path $TestDrive -ChildPath 'event.json'
-        $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile = Join-Path -Path $TestDrive -ChildPath 'settings.yml'
+        $settingsFileName = 'settings-{0}.yml' -f [guid]::NewGuid().ToString('N')
+        $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile = Join-Path -Path $TestDrive -ChildPath $settingsFileName
         $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'true'
         $githubEvent = @{
             action       = 'opened'
@@ -174,6 +176,70 @@ VersionPrefix: ''
         $output | Should -Match 'gh release create v2\.1\.0 '
     }
 
+    It 'applies typed YAML caller overrides without changing the scalar input/file precedence' {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
+        'DefaultBump: major' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = 'DefaultBump: minor'
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'Default bump:\s+\[minor\]'
+        $output | Should -Match 'Default bump source:\s+\[CallerOverride\]'
+        $output | Should -Match 'Bump source:\s+\[CallerOverride\]'
+        $output | Should -Match 'gh release create v2\.1\.0 '
+        Should -Invoke gh -Times 2 -Exactly
+    }
+
+    It 'accepts JSON caller overrides including false and empty strings' {
+        @'
+DefaultBump: major
+AutoCleanup: true
+VersionPrefix: v
+'@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = '{"DefaultBump":"patch","AutoCleanup":false,"VersionPrefix":""}'
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'Default bump:\s+\[patch\]'
+        $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
+        $output | Should -Match 'gh release create 2\.0\.4 '
+        Should -Invoke gh -Times 2 -Exactly
+    }
+
+    It 'does not mask an invalid file value with a valid explicit caller override' {
+        'DefaultBump: invalid' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = 'DefaultBump: patch'
+
+        { & $mainPath } | Should -Throw '*DefaultBump*'
+        Should -Invoke gh -Times 0 -Exactly
+    }
+
+    It 'keeps validation read-only when explicit WhatIf overrides a false repository setting' {
+        'WhatIf: false' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = 'WhatIf: true'
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'What if mode:\s+\[True\]'
+        $output | Should -Match 'WhatIf: gh label create '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'rejects invalid caller overrides before contacting GitHub' -ForEach @(
+        @{ Overrides = ''; Message = '*CallerOverrides must be a mapping*' }
+        @{ Overrides = 'null'; Message = '*CallerOverrides must be a mapping*' }
+        @{ Overrides = '- patch'; Message = '*CallerOverrides must be a mapping*' }
+        @{ Overrides = 'DefaultBump: date'; Message = '*DefaultBump*' }
+        @{ Overrides = 'DefaultBump: null'; Message = '*DefaultBump*' }
+        @{ Overrides = 'WhatIf: invalid'; Message = '*WhatIf*true or false*' }
+    ) {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = $Overrides
+
+        { & $mainPath } | Should -Throw $Message
+        Should -Invoke gh -Times 0 -Exactly
+    }
+
     It 'validates a merged skipped pull request successfully without planning publication' {
         $githubEvent.pull_request.labels = @(@{ name = 'release:skip' })
         $githubEvent.pull_request.merged = $true
@@ -215,6 +281,7 @@ VersionPrefix: ''
         @{ Yaml = 'DefaultBump: null'; Message = '*DefaultBump*' }
         @{ Yaml = 'DefaultBump: date'; Message = '*Invalid DefaultBump*' }
         @{ Yaml = 'WhatIf: invalid'; Message = '*WhatIf*true or false*' }
+        @{ Yaml = "DatePrereleaseFormat: '%'"; Message = '*DatePrereleaseFormat*format*' }
         @{ Yaml = 'AutoPatching: false'; Message = '*AutoPatching*removed*' }
         @{ Yaml = 'DefaultBunp: minor'; Message = '*Unsupported release setting*' }
         @{ Yaml = '- patch'; Message = '*configuration must be a mapping*' }
