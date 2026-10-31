@@ -37,6 +37,9 @@ jobs:
         with:
           Path: tests
           Version: 6.1.0
+          Prescript: |
+            Install-PSResource -Name powershell-yaml -Version '[0.4.12]' -TrustRepository -Repository PSGallery
+            Install-PSResource -Name PSSemVer -Version '[1.1.10]' -TrustRepository -Repository PSGallery
 
   ActionTestDefault:
     name: Action-Test - [Default]
