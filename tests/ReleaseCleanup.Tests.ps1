@@ -134,6 +134,10 @@ Describe 'Branch prerelease cleanup' {
             [pscustomobject]@{ tagName = 'v1.2.4-otherfeaturetest.1'; isPrerelease = $true; isLatest = $false }
             [pscustomobject]@{ tagName = 'v1.2.4-other.1+featuretest'; isPrerelease = $true; isLatest = $false }
             [pscustomobject]@{ tagName = 'v1.2.4-other.1'; isPrerelease = $true; isLatest = $false }
+            [pscustomobject]@{ tagName = 'notversion-featuretest.1'; isPrerelease = $true; isLatest = $false }
+            [pscustomobject]@{ tagName = 'v1.2.4.5-featuretest.1'; isPrerelease = $true; isLatest = $false }
+            [pscustomobject]@{ tagName = 'v1.2.4-featuretest.3'; isLatest = $false }
+            [pscustomobject]@{ tagName = 'v1.2.4-featuretest.4'; isPrerelease = $null; isLatest = $false }
         )
         $script:deletedTags = [System.Collections.Generic.List[string]]::new()
         $global:ReleaseCleanupTestState.DeletedTags = $script:deletedTags
@@ -171,13 +175,18 @@ Describe 'Branch prerelease cleanup' {
         $global:LASTEXITCODE = $script:previousExitCode
     }
 
-    It 'Does not delete any release for the empty identifier from branch "<BranchName>"' -ForEach @(
-        @{ BranchName = '' }
-        @{ BranchName = '_' }
-        @{ BranchName = '-' }
-        @{ BranchName = '---___' }
+    It 'Does not delete any release for the empty identifier from branch "<BranchName>" (merged: <Merged>)' -ForEach @(
+        @{ BranchName = ''; Merged = $false }
+        @{ BranchName = '_'; Merged = $false }
+        @{ BranchName = '-'; Merged = $false }
+        @{ BranchName = '---___'; Merged = $false }
+        @{ BranchName = ''; Merged = $true }
+        @{ BranchName = '_'; Merged = $true }
+        @{ BranchName = '-'; Merged = $true }
+        @{ BranchName = '---___'; Merged = $true }
     ) {
         $script:event.pull_request.head.ref = $BranchName
+        $script:event.pull_request.merged = $Merged
         $script:event | ConvertTo-Json -Depth 5 | Set-Content -Path $env:GITHUB_EVENT_PATH
 
         & $script:mainPath | Out-Null
@@ -205,7 +214,7 @@ Describe 'Branch prerelease cleanup' {
         $script:deletedTags[0] | Should -BeExactly $ExpectedTag
     }
 
-    It 'Cleans up plain, incremental, and date-based branch prereleases after close or merge' -ForEach @(
+    It 'Cleans up plain, incremental, and date-based branch prereleases (merged: <Merged>)' -ForEach @(
         @{ Merged = $false }
         @{ Merged = $true }
     ) {
@@ -270,6 +279,32 @@ Describe 'Branch prerelease cleanup' {
 
         $script:deletedTags.Count | Should -Be 1
         $script:deletedTags[0] | Should -BeExactly '1.2.4-featuretest.1'
+    }
+
+    It 'Previews only intended deletions in WhatIf mode for branch "<BranchName>"' -ForEach @(
+        @{ BranchName = '_'; ExpectedTags = @() }
+        @{ BranchName = '1'; ExpectedTags = @('v1.2.4-1.1') }
+        @{
+            BranchName   = 'feature/test'
+            ExpectedTags = @('v1.2.4-featuretest', 'v1.2.4-featuretest.1', 'v1.2.4-featuretest.20261102.2')
+        }
+    ) {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'true'
+        $script:event.pull_request.head.ref = $BranchName
+        $global:ReleaseCleanupTestState.Releases += [pscustomobject]@{
+            tagName = 'v1.2.4-1.1'; isPrerelease = $true; isLatest = $false
+        }
+        $script:event | ConvertTo-Json -Depth 5 | Set-Content -Path $env:GITHUB_EVENT_PATH
+
+        $output = & $script:mainPath
+
+        $previews = @($output | Where-Object { $_ -like 'WhatIf: gh release delete *' })
+        $previews.Count | Should -Be $ExpectedTags.Count
+        for ($index = 0; $index -lt $ExpectedTags.Count; $index++) {
+            $previews[$index] | Should -BeExactly "WhatIf: gh release delete $($ExpectedTags[$index]) --cleanup-tag --yes"
+        }
+        $script:deletedTags.Count | Should -Be 0
+        Should -Invoke -CommandName git -Times 0 -Exactly
     }
 }
 

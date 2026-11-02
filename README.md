@@ -28,6 +28,11 @@ The following labels will inform the action what kind of release to create:
 
 When a pull request is closed, the action will create a release based on the labels and clean up any previous prereleases that were created.
 
+Cleanup only deletes releases marked as prereleases whose version tags match the configured `VersionPrefix` and the exact sanitized
+branch name as the first prerelease identifier. Plain, incremental, and date-based branch prereleases are supported.
+Stable releases and unrelated branch prereleases are never selected. If removing non-alphanumeric characters leaves the branch name empty
+(for example, `_` or `-`), cleanup is skipped with a warning. Cleanup also runs when an unmerged pull request is closed.
+
 > [!NOTE]
 > The labels can be configured using the `MajorLabels`, `MinorLabels` and `PatchLabels` parameters/settings in the configuration file to trigger
 > on other labels.
@@ -116,3 +121,14 @@ permissions:
   contents: write # Required to create releases
   pull-requests: write # Required to create comments on the PRs
 ```
+
+## Local cleanup tests
+
+With PowerShell 7, Pester 6, and PSSemVer installed, run:
+
+```powershell
+Invoke-Pester -Path .\tests\ReleaseCleanup.Tests.ps1 -Output Detailed
+```
+
+The tests run the action script with isolated pull request events and release fixtures.
+GitHub and git commands are mocked so no real releases or tags are created or deleted.
