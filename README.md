@@ -29,7 +29,8 @@ The following labels will inform the action what kind of release to create:
 When a pull request is closed, the action will create a release based on the labels and clean up any previous prereleases that were created.
 
 Cleanup only deletes releases marked as prereleases whose version tags match the configured `VersionPrefix` and the exact sanitized
-branch name as the first prerelease identifier. Plain, incremental, and date-based branch prereleases are supported.
+branch name as the first prerelease identifier. Both matches are case-sensitive.
+Plain, incremental, and date-based branch prereleases are supported.
 Stable releases and unrelated branch prereleases are never selected. If removing non-alphanumeric characters leaves the branch name empty
 (for example, `_` or `-`), cleanup is skipped with a warning. Cleanup also runs when an unmerged pull request is closed.
 

@@ -374,7 +374,7 @@ LogGroup 'List prereleases using the same name' {
         $escapedPrereleaseName = [regex]::Escape($prereleaseName)
         $prereleaseTagPattern = "^${escapedVersionPrefix}[0-9]+\.[0-9]+\.[0-9]+-${escapedPrereleaseName}(?:\.|$)"
         $prereleasesToCleanup = $releases | Where-Object {
-            $_.isPrerelease -eq $true -and $_.tagName -match $prereleaseTagPattern
+            $_.isPrerelease -eq $true -and $_.tagName -cmatch $prereleaseTagPattern
         }
     }
     $prereleasesToCleanup | Select-Object -Property name, publishedAt, isPrerelease, isLatest | Format-Table | Out-String

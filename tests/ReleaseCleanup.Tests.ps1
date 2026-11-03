@@ -234,6 +234,26 @@ Describe 'Branch prerelease cleanup' {
         }
     }
 
+    It 'Matches branch identifiers and version prefixes case-sensitively for "<BranchName>"' -ForEach @(
+        @{ BranchName = 'feature/test'; ExpectedTag = 'v1.2.4-featuretest.1' }
+        @{ BranchName = 'Feature/Test'; ExpectedTag = 'v1.2.4-FeatureTest.1' }
+    ) {
+        $script:event.pull_request.head.ref = $BranchName
+        $global:ReleaseCleanupTestState.Releases = @(
+            [pscustomobject]@{ tagName = 'v1.2.3'; isPrerelease = $false; isLatest = $true }
+            [pscustomobject]@{ tagName = 'v1.2.4-featuretest.1'; isPrerelease = $true; isLatest = $false }
+            [pscustomobject]@{ tagName = 'v1.2.4-FeatureTest.1'; isPrerelease = $true; isLatest = $false }
+            [pscustomobject]@{ tagName = 'V1.2.4-featuretest.1'; isPrerelease = $true; isLatest = $false }
+            [pscustomobject]@{ tagName = 'V1.2.4-FeatureTest.1'; isPrerelease = $true; isLatest = $false }
+        )
+        $script:event | ConvertTo-Json -Depth 5 | Set-Content -Path $env:GITHUB_EVENT_PATH
+
+        & $script:mainPath | Out-Null
+
+        $script:deletedTags.Count | Should -Be 1
+        $script:deletedTags[0] | Should -BeExactly $ExpectedTag
+    }
+
     It 'Honors AutoCleanup being disabled' {
         $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup = 'false'
         $script:event | ConvertTo-Json -Depth 5 | Set-Content -Path $env:GITHUB_EVENT_PATH
