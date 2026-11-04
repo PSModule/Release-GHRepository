@@ -83,7 +83,7 @@ Add a workflow in your repository using the following example:
 name: Release-GHRepository
 
 on:
-  pull_request_target:
+  pull_request:
     branches:
       - main
     types:
