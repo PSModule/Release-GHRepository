@@ -87,7 +87,7 @@ The `pull_request_target` workflow checks out the trusted base branch. Do not ch
 | --- | --- | --- | --- |
 | `AutoCleanup` | Delete prereleases after the pull request closes. | `true` | false |
 | `CallerOverrides` | Supply a YAML or JSON mapping of explicit invocation overrides. These override repository settings. | `{}` | false |
-| `ConfigurationFile` | Read repository settings from this file. File values override scalar action inputs, but not `CallerOverrides`. | `.github\release.settings.yml` | false |
+| `ConfigurationFile` | Read repository settings from this file. File values override scalar action inputs, but not `CallerOverrides`. | `.github\auto-release.yml` | false |
 | `DefaultBump` | Select the bump when no explicit bump or skip label exists. Accepts exactly `patch`, `minor`, or `major` with case-sensitive matching. | `patch` | false |
 | `CreateMajorTag` | Create or update the floating major tag after a stable release. | `true` | false |
 | `CreateMinorTag` | Create or update the floating minor tag after a stable release. | `true` | false |
@@ -106,11 +106,9 @@ The `pull_request_target` workflow checks out the trusted base branch. Do not ch
 
 Use the `release:prerelease` label to select repository prerelease behavior. The similarly named `Prerelease` action input only controls dependency resolution for the GitHub module used internally.
 
-### Settings file
+### Configuration file
 
-The optional repository settings file is `.github\release.settings.yml`. When it is absent, valid action defaults and caller inputs still apply. `ConfigurationFile` preserves explicit control over a custom settings path; it does not add another conventional filename or search path.
-
-The removed conventional `.github\auto-release.yml` path has no reader fallback or alias, even when selected explicitly. Its presence alongside the default settings path fails before GitHub operations instead of silently changing the release policy. An existing explicitly selected custom file is read as directed; a missing selected file cannot silently discard legacy conventional settings. The release record contains the exact filename/reader adoption steps.
+The default configuration file is `.github\auto-release.yml`. Change its path with `ConfigurationFile`.
 
 Settings resolve in this order: defaults declared in `action.yml`, scalar action inputs, repository settings, then explicit `CallerOverrides`. Scalar inputs retain the existing file-over-input behavior because GitHub injects their defaults even when callers omit them. Use `CallerOverrides` for an invocation-specific override; its omitted `{}` mapping inherits repository settings without masking them.
 
@@ -119,18 +117,10 @@ An explicit `false` or empty string is an override, not an omitted setting. Bool
 The file and `CallerOverrides` must contain mappings. They accept the release settings from `AutoCleanup` through `WhatIf` in the input table, excluding `CallerOverrides` and `ConfigurationFile` themselves. The dependency/runtime inputs (`Debug`, `Verbose`, `Version`, `Prerelease`, and `WorkingDirectory`) are supplied separately by the caller. Unknown keys, removed keys, null values, and invalid values fail before label provisioning.
 
 ```yaml
-# .github\release.settings.yml
 DatePrereleaseFormat: 'yyyyMMddHHmm'
 DefaultBump: patch
 IncrementalPrerelease: false
 VersionPrefix: ''
-```
-
-For an intentional custom path:
-
-```yaml
-with:
-  ConfigurationFile: .github\custom-release.settings.yml
 ```
 
 For an invocation-specific minor bump, even when the repository configures major:

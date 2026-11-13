@@ -69,29 +69,8 @@ LogGroup 'Set configuration' {
     if ([string]::IsNullOrWhiteSpace($configurationPath)) {
         throw 'ConfigurationFile must be a nonempty path.'
     }
-    $pathResolver = $ExecutionContext.SessionState.Path
-    $defaultConfigurationPath = $pathResolver.GetUnresolvedProviderPathFromPSPath(
-        $actionDefinition.inputs.ConfigurationFile.default
-    )
-    $configurationPath = $pathResolver.GetUnresolvedProviderPathFromPSPath($configurationPath)
-    $legacyConfigurationPath = Join-Path -Path (Split-Path -Path $defaultConfigurationPath -Parent) -ChildPath 'auto-release.yml'
-    $pathComparison = [StringComparison]::Ordinal
-    if ($IsWindows) {
-        $pathComparison = [StringComparison]::OrdinalIgnoreCase
-    }
-    $usesDefaultPath = [string]::Equals($configurationPath, $defaultConfigurationPath, $pathComparison)
-    $usesLegacyPath = [string]::Equals($configurationPath, $legacyConfigurationPath, $pathComparison)
-    $configurationExists = Test-Path -LiteralPath $configurationPath -PathType Leaf
-    $legacyExists = Test-Path -LiteralPath $legacyConfigurationPath -PathType Leaf
-    if ($usesLegacyPath -or ($legacyExists -and ($usesDefaultPath -or -not $configurationExists))) {
-        throw (
-            "Conventional settings [$legacyConfigurationPath] are no longer supported. " +
-            "Rename or reconcile the file into [$defaultConfigurationPath] and update ConfigurationFile " +
-            'together with a compatible release-engine reference, or select an existing custom settings file.'
-        )
-    }
     $configuration = @{}
-    if (-not $configurationExists) {
+    if (-not (Test-Path -LiteralPath $configurationPath -PathType Leaf)) {
         Write-Output "Configuration file not found at [$configurationPath]"
     } else {
         Write-Output "Reading from configuration file [$configurationPath]"

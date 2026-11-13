@@ -21,7 +21,7 @@ inputs:
       The repository settings file. File values override scalar action inputs;
       explicit CallerOverrides take precedence over file values.
     required: false
-    default: .github\release.settings.yml
+    default: .github\auto-release.yml
   DefaultBump:
     description: The release bump to use when no explicit release bump or skip label exists. Accepts exactly patch, minor, or major with case-sensitive matching.
     required: false
