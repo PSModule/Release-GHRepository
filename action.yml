@@ -1,5 +1,5 @@
 name: Release GHRepository (by PSModule)
-description: Automatically creates releases based on pull requests and labels.
+description: Creates GitHub releases from owned pull-request labels and effective release settings.
 author: PSModule
 branding:
   icon: upload-cloud
@@ -7,17 +7,25 @@ branding:
 
 inputs:
   AutoCleanup:
-    description: Control whether to automatically delete the prerelease tags after the stable release is created.
+    description: Delete pull-request prereleases and their tags after the pull request closes.
     required: false
     default: 'true'
-  AutoPatching:
-    description: Control whether to automatically handle patches. If disabled, the action will only create a patch release if the pull request has a 'patch' label.
+  CallerOverrides:
+    description: >-
+      A YAML or JSON mapping of explicit release-setting overrides. Overrides repository settings
+      without confusing omitted inputs with action defaults.
     required: false
-    default: 'true'
+    default: '{}'
   ConfigurationFile:
-    description: The path to the configuration file. Settings in the configuration file take precedence over the action inputs.
+    description: >-
+      The repository settings file. File values override scalar action inputs;
+      explicit CallerOverrides take precedence over file values.
     required: false
     default: .github\auto-release.yml
+  DefaultBump:
+    description: The release bump to use when no explicit release bump or skip label exists. Accepts exactly patch, minor, or major with case-sensitive matching.
+    required: false
+    default: patch
   CreateMajorTag:
     description: Control whether to create a major tag when a pull request is merged into the main branch.
     required: false
@@ -30,26 +38,10 @@ inputs:
     description: If specified, uses a date based prerelease scheme. The format should be a valid .NET format string like 'yyyyMMddHHmm'.
     required: false
     default: ''
-  IgnoreLabels:
-    description: A comma separated list of labels that do not trigger a release.
-    required: false
-    default: NoRelease
   IncrementalPrerelease:
     description: Control whether to automatically increment the prerelease number. If disabled, the action will ensure only one prerelease exists for a given branch.
     required: false
     default: 'true'
-  MajorLabels:
-    description: A comma separated list of labels that trigger a major release.
-    required: false
-    default: major, breaking
-  MinorLabels:
-    description: A comma separated list of labels that trigger a minor release.
-    required: false
-    default: minor, feature
-  PatchLabels:
-    description: A comma separated list of labels that trigger a patch release.
-    required: false
-    default: patch, fix
   UsePRTitleAsReleaseName:
     description: When enabled, uses the pull request title as the name for the GitHub release.
     required: false
@@ -67,7 +59,7 @@ inputs:
     required: false
     default: v
   WhatIf:
-    description: If specified, the action will only log the changes it would make, but will not actually create or delete any releases or tags.
+    description: Log planned label, release, tag, and comment changes without mutating repository state.
     required: false
     default: 'false'
   Debug:
@@ -82,7 +74,7 @@ inputs:
     description: Specifies the version of the GitHub module to be installed. Accepts an exact version or a NuGet version range (for example '[1.2.0, 2.0.0)').
     required: false
   Prerelease:
-    description: Allow prerelease versions if available.
+    description: Allow prerelease versions of the GitHub module dependency. This does not control repository releases; use the release:prerelease label.
     required: false
     default: 'false'
   WorkingDirectory:
@@ -97,16 +89,13 @@ runs:
       uses: PSModule/GitHub-Script@8083ec1f733f00357ee4d0db0c6056686e483bc0 # v1.9.0
       env:
         PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup: ${{ inputs.AutoCleanup }}
-        PSMODULE_AUTO_RELEASE_INPUT_AutoPatching: ${{ inputs.AutoPatching }}
+        PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides: ${{ inputs.CallerOverrides }}
         PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile: ${{ inputs.ConfigurationFile }}
+        PSMODULE_AUTO_RELEASE_INPUT_DefaultBump: ${{ inputs.DefaultBump }}
         PSMODULE_AUTO_RELEASE_INPUT_CreateMajorTag: ${{ inputs.CreateMajorTag }}
         PSMODULE_AUTO_RELEASE_INPUT_CreateMinorTag: ${{ inputs.CreateMinorTag }}
         PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat: ${{ inputs.DatePrereleaseFormat }}
-        PSMODULE_AUTO_RELEASE_INPUT_IgnoreLabels: ${{ inputs.IgnoreLabels }}
         PSMODULE_AUTO_RELEASE_INPUT_IncrementalPrerelease: ${{ inputs.IncrementalPrerelease }}
-        PSMODULE_AUTO_RELEASE_INPUT_MajorLabels: ${{ inputs.MajorLabels }}
-        PSMODULE_AUTO_RELEASE_INPUT_MinorLabels: ${{ inputs.MinorLabels }}
-        PSMODULE_AUTO_RELEASE_INPUT_PatchLabels: ${{ inputs.PatchLabels }}
         PSMODULE_AUTO_RELEASE_INPUT_UsePRBodyAsReleaseNotes: ${{ inputs.UsePRBodyAsReleaseNotes }}
         PSMODULE_AUTO_RELEASE_INPUT_UsePRTitleAsReleaseName: ${{ inputs.UsePRTitleAsReleaseName }}
         PSMODULE_AUTO_RELEASE_INPUT_UsePRTitleAsNotesHeading: ${{ inputs.UsePRTitleAsNotesHeading }}
