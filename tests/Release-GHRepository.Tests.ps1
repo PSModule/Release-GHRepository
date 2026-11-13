@@ -10,6 +10,8 @@ $ErrorActionPreference = 'Stop'
 BeforeAll {
     Import-Module -Name GitHub, powershell-yaml, PSSemVer
     $mainPath = Join-Path -Path $PSScriptRoot -ChildPath '..\src\main.ps1'
+    $actionPath = Join-Path -Path $PSScriptRoot -ChildPath '..\action.yml'
+    $actionDefinition = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $actionPath -Raw)
     $headSha = '0123456789012345678901234567890123456789'
     $authoredBody = @'
 This release preserves the source-bound adoption record.
@@ -78,6 +80,10 @@ Describe 'Release-GHRepository caller compatibility' {
         }
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 
+        $callerDirectory = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N'))
+        $null = New-Item -Path (Join-Path -Path $callerDirectory -ChildPath '.github') -ItemType Directory
+        Push-Location -LiteralPath $callerDirectory
+
         $releaseRecordsJson = '[{"tagName":"v2.0.3","isLatest":true,"isPrerelease":false}]'
         Mock Install-PSResource {}
         Mock Write-GitHubNotice {}
@@ -95,6 +101,7 @@ Describe 'Release-GHRepository caller compatibility' {
     }
 
     AfterEach {
+        Pop-Location
         foreach ($name in $environmentNames) {
             if ($null -eq $savedEnvironment[$name]) {
                 if (Test-Path -LiteralPath "Env:\$name") {
@@ -104,6 +111,154 @@ Describe 'Release-GHRepository caller compatibility' {
                 [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name])
             }
         }
+    }
+
+    It 'declares release.settings.yml as the only conventional settings default' {
+        $actionDefinition.inputs.ConfigurationFile.default | Should -BeExactly '.github\release.settings.yml'
+        $actionDefinition.runs.steps[0].env.PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile |
+            Should -BeExactly '${{ inputs.ConfigurationFile }}'
+    }
+
+    It 'reads the declared default without an injected ConfigurationFile input' {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        @'
+DefaultBump: minor
+WhatIf: true
+'@ | Set-Content -LiteralPath '.github\release.settings.yml'
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'Reading from configuration file .*release\.settings\.yml'
+        $output | Should -Match 'Default bump:\s+\[minor\]'
+        $output | Should -Match 'Default bump source:\s+\[RepositorySetting\]'
+        $output | Should -Match 'gh release create v2\.1\.0 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'inherits valid defaults when the conventional settings file is intentionally absent' {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'Configuration file not found at .*release\.settings\.yml'
+        $output | Should -Match 'Default bump:\s+\[patch\]'
+        $output | Should -Match 'Default bump source:\s+\[SharedDefault\]'
+        $output | Should -Match 'gh release create v2\.0\.4 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'rejects legacy-only conventional settings instead of silently applying another policy' {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        @'
+DefaultBump: major
+WhatIf: false
+'@ | Set-Content -LiteralPath '.github\auto-release.yml'
+
+        { & $mainPath } |
+            Should -Throw '*auto-release.yml*no longer supported*release.settings.yml*ConfigurationFile*'
+        Should -Invoke gh -Times 0 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'rejects a legacy conventional file even when the new default file also exists' {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile = '.github\release.settings.yml'
+        'DefaultBump: major' | Set-Content -LiteralPath '.github\auto-release.yml'
+        'DefaultBump: minor' | Set-Content -LiteralPath '.github\release.settings.yml'
+
+        { & $mainPath } | Should -Throw '*auto-release.yml*no longer supported*release.settings.yml*'
+        Should -Invoke gh -Times 0 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'rejects the removed conventional path even when explicitly supplied as <PathKind>' -ForEach @(
+        @{ PathKind = 'relative'; PathValue = '.github\auto-release.yml' }
+        @{ PathKind = 'normalized relative'; PathValue = '.github\..\.github\auto-release.yml' }
+        @{ PathKind = 'absolute'; PathValue = $null }
+    ) {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile = $PathValue
+        if ($PathKind -eq 'absolute') {
+            $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile = Join-Path -Path $callerDirectory -ChildPath '.github\auto-release.yml'
+        }
+        @'
+DefaultBump: major
+WhatIf: false
+'@ | Set-Content -LiteralPath '.github\auto-release.yml'
+
+        { & $mainPath } | Should -Throw '*auto-release.yml*no longer supported*release.settings.yml*'
+        Should -Invoke gh -Times 0 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'preserves an intentional custom settings path without adding discovery or fallback' {
+        'DefaultBump: major' | Set-Content -LiteralPath '.github\auto-release.yml'
+        'DefaultBump: major' | Set-Content -LiteralPath '.github\release.settings.yml'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile = Join-Path -Path $callerDirectory -ChildPath 'custom.settings.yml'
+        @'
+DefaultBump: minor
+WhatIf: false
+'@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = 'WhatIf: true'
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'Reading from configuration file .*custom\.settings\.yml'
+        $output | Should -Match 'Default bump:\s+\[minor\]'
+        $output | Should -Match 'gh release create v2\.1\.0 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'does not ignore legacy settings when an explicitly selected custom file is missing' {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile = 'missing.settings.yml'
+        'DefaultBump: major' | Set-Content -LiteralPath '.github\auto-release.yml'
+
+        { & $mainPath } | Should -Throw '*auto-release.yml*no longer supported*release.settings.yml*ConfigurationFile*'
+        Should -Invoke gh -Times 0 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'retains scope precedence when the new default file is selected without injection' {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
+        @'
+DefaultBump: major
+WhatIf: false
+'@ | Set-Content -LiteralPath '.github\release.settings.yml'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = @'
+DefaultBump: minor
+WhatIf: true
+'@
+        $githubEvent.pull_request.labels = @(@{ name = 'release:patch' })
+        $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'Reading from configuration file .*release\.settings\.yml'
+        $output | Should -Match 'Default bump:\s+\[minor\]'
+        $output | Should -Match 'Default bump source:\s+\[CallerOverride\]'
+        $output | Should -Match 'Bump source:\s+\[release:patch\]'
+        $output | Should -Match 'gh release create v2\.0\.4 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'rejects invalid data in the new default file before contacting GitHub' -ForEach @(
+        @{ Yaml = 'DefaultBump: date'; Message = '*Invalid DefaultBump*' }
+        @{ Yaml = 'DefaultBump: null'; Message = '*DefaultBump*' }
+        @{ Yaml = 'WhatIf: invalid'; Message = '*WhatIf*true or false*' }
+        @{ Yaml = 'AutoPatching: false'; Message = '*AutoPatching*removed*' }
+        @{ Yaml = '- patch'; Message = '*configuration must be a mapping*' }
+        @{ Yaml = ''; Message = '*configuration*must be a mapping*' }
+    ) {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        $Yaml | Set-Content -LiteralPath '.github\release.settings.yml'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = 'DefaultBump: patch'
+
+        { & $mainPath } | Should -Throw $Message
+        Should -Invoke gh -Times 0 -Exactly
+        Should -Invoke git -Times 0 -Exactly
     }
 
     It 'uses action.yml defaults without relying on the composite wrapper to inject them' {
