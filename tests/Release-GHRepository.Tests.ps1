@@ -199,7 +199,7 @@ WhatIf: false
 DefaultBump: minor
 WhatIf: false
 '@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
-        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = 'WhatIf: true'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'true'
 
         $output = (& $mainPath) -join "`n"
 
@@ -252,7 +252,7 @@ WhatIf: true
     ) {
         Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
         $Yaml | Set-Content -LiteralPath '.github\release.settings.yml'
-        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = 'DefaultBump: patch'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
 
         { & $mainPath } | Should -Throw $Message
         Should -Invoke gh -Times 0 -Exactly
