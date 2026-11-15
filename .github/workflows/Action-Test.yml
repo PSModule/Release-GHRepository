@@ -58,12 +58,35 @@ jobs:
         with:
           WhatIf: true
 
+      - name: Prepare caller settings
+        id: caller-settings
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $settingsFilePath = Join-Path -Path $env:RUNNER_TEMP -ChildPath 'release-caller.settings.yml'
+          @'
+          DefaultBump: major
+          AutoCleanup: true
+          CreateMajorTag: false
+          DatePrereleaseFormat: yyyyMMdd
+          VersionPrefix: v
+          WhatIf: false
+          '@ | Set-Content -LiteralPath $settingsFilePath
+          "path=$settingsFilePath" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+
       - name: Action-Test - Named overrides
         uses: ./
         with:
-          SettingsFilePath: .github\action-test.settings.yml
+          SettingsFilePath: ${{ steps.caller-settings.outputs.path }}
           DefaultBump: minor
           AutoCleanup: false
           DatePrereleaseFormat: ''
           VersionPrefix: ''
           WhatIf: true
+
+      - name: Remove caller settings
+        if: ${{ always() && steps.caller-settings.outputs.path != '' }}
+        shell: pwsh
+        env:
+          CALLER_SETTINGS_PATH: ${{ steps.caller-settings.outputs.path }}
+        run: Remove-Item -LiteralPath $env:CALLER_SETTINGS_PATH -ErrorAction Stop
