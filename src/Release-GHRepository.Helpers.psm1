@@ -83,10 +83,10 @@ function ConvertTo-ReleaseSettingValue {
 function Resolve-ReleaseConfiguration {
     <#
         .SYNOPSIS
-        Resolve validated release settings from file-backed standards and inputs.
+        Resolve validated release settings from action standards and inputs.
 
         .DESCRIPTION
-        Apply repository settings over bundled file-backed standards, then
+        Apply repository settings over action-metadata standards, then
         nonempty named action inputs. Validate every supplied layer so invalid
         values cannot be masked. Preserve explicit false and file empty text
         values, and record the effective default-bump source.
@@ -114,7 +114,7 @@ function Resolve-ReleaseConfiguration {
     [OutputType([PSCustomObject])]
     [CmdletBinding()]
     param(
-        # Standard settings parsed from the action-owned settings file.
+        # Standard settings parsed from the action's internal metadata declaration.
         [Parameter(Mandatory)]
         [System.Collections.IDictionary] $Defaults,
 

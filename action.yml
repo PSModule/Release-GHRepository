@@ -7,45 +7,65 @@ branding:
 
 inputs:
   AutoCleanup:
-    description: Delete pull-request prereleases and their tags after the pull request closes.
+    description: >-
+      Delete pull-request prereleases and their tags after the pull request closes.
+      Effective standard default: true.
     required: false
   SettingsFilePath:
     description: >-
       The path to the repository settings file. Explicit named release-setting inputs override file values;
-      omitted or empty release-setting inputs retain file policy and bundled standards.
+      omitted or empty release-setting inputs retain file policy and action standards.
     required: false
     default: .github\auto-release.yml
   DefaultBump:
     description: >-
       The release bump without an owned bump or skip label. Accepts exactly patch, minor, or major.
-      Omit or leave empty for repository policy, then the bundled patch standard.
+      Effective standard default: patch. Omit or leave empty to follow repository policy.
     required: false
   CreateMajorTag:
-    description: Control whether to create a major tag when a pull request is merged into the main branch.
+    description: >-
+      Control whether to create a major tag when a pull request is merged into the main branch.
+      Effective standard default: true.
     required: false
   CreateMinorTag:
-    description: Control whether to create a minor tag when a pull request is merged into the main branch.
+    description: >-
+      Control whether to create a minor tag when a pull request is merged into the main branch.
+      Effective standard default: true.
     required: false
   DatePrereleaseFormat:
-    description: If specified, uses a date based prerelease scheme. The format should be a valid .NET format string like 'yyyyMMddHHmm'.
+    description: >-
+      Format the existing prerelease date suffix with a valid .NET format such as yyyyMMddHHmm.
+      Effective standard default: empty string (no date suffix).
     required: false
   IncrementalPrerelease:
-    description: Control whether to automatically increment the prerelease number. If disabled, the action will ensure only one prerelease exists for a given branch.
+    description: >-
+      Automatically increment the prerelease number; when false, keep one prerelease for the branch.
+      Effective standard default: true.
     required: false
   UsePRTitleAsReleaseName:
-    description: When enabled, uses the pull request title as the name for the GitHub release.
+    description: >-
+      Use the pull request title as the GitHub release name.
+      Effective standard default: false.
     required: false
   UsePRBodyAsReleaseNotes:
-    description: When enabled, uses the pull request body as the release notes for the GitHub release.
+    description: >-
+      Use the pull request body as GitHub release notes.
+      Effective standard default: true.
     required: false
   UsePRTitleAsNotesHeading:
-    description: When enabled, the release notes will begin with the pull request title as a H1 heading followed by the pull request body. The title will reference the pull request number.
+    description: >-
+      Begin release notes with the pull request title and number as an H1 heading.
+      Effective standard default: true.
     required: false
   VersionPrefix:
-    description: The prefix to use for the version number.
+    description: >-
+      Prefix the version number.
+      Effective standard default: v.
     required: false
   WhatIf:
-    description: Log planned label, release, tag, and comment changes without mutating repository state.
+    description: >-
+      Log planned label, release, tag, and comment changes without mutating repository state.
+      Effective standard default: false.
     required: false
   Debug:
     description: Enable debug output.
@@ -73,6 +93,18 @@ runs:
     - name: Release-GHRepository
       uses: PSModule/GitHub-Script@8083ec1f733f00357ee4d0db0c6056686e483bc0 # v1.9.0
       env:
+        PSMODULE_AUTO_RELEASE_DEFAULT_SETTINGS: |
+          AutoCleanup: true
+          DefaultBump: patch
+          CreateMajorTag: true
+          CreateMinorTag: true
+          DatePrereleaseFormat: ''
+          IncrementalPrerelease: true
+          UsePRTitleAsReleaseName: false
+          UsePRBodyAsReleaseNotes: true
+          UsePRTitleAsNotesHeading: true
+          VersionPrefix: v
+          WhatIf: false
         PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup: ${{ inputs.AutoCleanup }}
         PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath: ${{ inputs.SettingsFilePath }}
         PSMODULE_AUTO_RELEASE_INPUT_DefaultBump: ${{ inputs.DefaultBump }}

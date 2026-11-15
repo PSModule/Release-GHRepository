@@ -83,7 +83,7 @@ The `pull_request_target` workflow checks out the trusted base branch. Do not ch
 
 ## Inputs
 
-Standard release values come from the action-owned [settings file](src/release.settings.yml). Repository settings override those standards. A supplied nonempty action input overrides repository policy, even when its value equals a standard. Omitted, null, and empty-string release-setting inputs do not override file values; explicit `false` remains an override.
+Each release-setting input description shows its effective standard default. These values are defined in the action's internal `action.yml` standards declaration, not a bundled settings file. Runtime release inputs have no native policy defaults: omitted, null, and empty-string inputs leave repository policy unchanged. A supplied nonempty input overrides policy even when equal to a standard; explicit `false` remains an override.
 
 | Name | Description | Effective default | Required |
 | --- | --- | --- | --- |
@@ -109,9 +109,11 @@ Use the `release:prerelease` label to select repository prerelease behavior. The
 
 ### Settings file path
 
-The default repository settings file path is `.github\auto-release.yml`. Use `SettingsFilePath` to select a custom file. Relative paths resolve from `WorkingDirectory`. Omit this input to use the default path; an empty or whitespace-only path is invalid. If the selected repository file is absent, bundled standards and nonempty named inputs remain effective.
+The default repository settings file path is `.github\auto-release.yml`. Use `SettingsFilePath` to select a custom file. Relative paths resolve from `WorkingDirectory`. Omit this input to use the default path; an empty or whitespace-only path is invalid. If the selected repository file is absent, action standards and nonempty named inputs remain effective.
 
-Settings resolve in this order: bundled `src\release.settings.yml`, the selected repository settings file, then nonempty named action inputs. The bundled file is required and is read relative to the action script, not the caller's working directory. `SettingsFilePath` selects only repository policy; it does not replace the bundled standards. An owned bump label overrides the valid effective `DefaultBump`. The action reports whether the bump comes from an owned label, a named action input, a repository setting, or the bundled standard.
+Settings resolve in this order: internal standards from the action's own metadata, the selected repository settings file, then nonempty named inputs. The controller reads the standards declaration, not the description prose. There is no bundled defaults asset or input-presence heuristic. An owned bump label overrides the valid effective `DefaultBump`. The action reports whether the bump comes from an owned label, a named input, a repository setting, or the shared standard.
+
+The runner does not expose its original caller-supplied key list to a composite action after it merges native defaults. A concrete native default would make omission indistinguishable from an explicitly supplied equal value. For example, with file policy `DefaultBump: major`, omitting the input retains major; supplying `DefaultBump: patch` deliberately overrides it. The action never detects presence by comparing values with a standard.
 
 The runner represents both omitted and explicitly empty composite inputs as empty text. Both mean no override for release settings. Empty inputs cannot clear text configured in a file. Set `VersionPrefix: ''` or `DatePrereleaseFormat: ''` in a settings file when an empty value is required; both remain supported file values.
 
