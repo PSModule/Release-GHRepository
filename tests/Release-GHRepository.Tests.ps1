@@ -242,6 +242,27 @@ WhatIf: true
         Should -Invoke git -Times 0 -Exactly
     }
 
+    It 'clears conventional-file text settings through explicit empty named inputs' {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix = ''
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = ''
+        @'
+DefaultBump: minor
+VersionPrefix: release-
+DatePrereleaseFormat: yyyyMMdd
+WhatIf: true
+'@ | Set-Content -LiteralPath '.github\release.settings.yml'
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'Reading from configuration file .*release\.settings\.yml'
+        $output | Should -Match 'Version prefix:\s+\[\]'
+        $output | Should -Match 'Date-based prerelease format:\s+\[\]'
+        $output | Should -Match 'gh release create 2\.1\.0 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
     It 'rejects invalid data in the new default file before contacting GitHub' -ForEach @(
         @{ Yaml = 'DefaultBump: date'; Message = '*Invalid DefaultBump*' }
         @{ Yaml = 'DefaultBump: null'; Message = '*DefaultBump*' }
