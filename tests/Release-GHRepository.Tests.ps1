@@ -139,12 +139,12 @@ WhatIf: true
         Should -Invoke git -Times 0 -Exactly
     }
 
-    It 'inherits conventional-file settings when named inputs select inherit' {
+    It 'uses conventional-file policy when named inputs are omitted or blank' {
         Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
-        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'inherit'
-        $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup = 'inherit'
-        $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix = 'inherit'
-        $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = 'inherit'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = ''
+        $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup = ''
+        $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix = ''
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = ''
         @'
 DefaultBump: minor
 AutoCleanup: false
@@ -272,7 +272,7 @@ WhatIf: true
         Should -Invoke git -Times 0 -Exactly
     }
 
-    It 'clears conventional-file text settings through explicit empty named inputs' {
+    It 'keeps conventional-file text settings when named inputs are blank' {
         Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix = ''
         $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = ''
@@ -286,9 +286,9 @@ WhatIf: true
         $output = (& $mainPath) -join "`n"
 
         $output | Should -Match 'Reading settings file .*release\.settings\.yml'
-        $output | Should -Match 'Version prefix:\s+\[\]'
-        $output | Should -Match 'Date-based prerelease format:\s+\[\]'
-        $output | Should -Match 'gh release create 2\.1\.0 '
+        $output | Should -Match 'Version prefix:\s+\[release-\]'
+        $output | Should -Match 'Date-based prerelease format:\s+\[yyyyMMdd\]'
+        $output | Should -Match 'gh release create release-2\.1\.0 '
         Should -Invoke gh -Times 2 -Exactly
         Should -Invoke git -Times 0 -Exactly
     }
