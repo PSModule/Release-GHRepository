@@ -26,7 +26,7 @@ BeforeAll {
         'VersionPrefix'
         'WhatIf'
     )
-    $bundleSettingsYaml = @'
+    $fixtureStandardsYaml = @'
 AutoCleanup: false
 DefaultBump: minor
 CreateMajorTag: true
@@ -337,7 +337,7 @@ WhatIf: true
         Should -Invoke git -Times 0 -Exactly
     }
 
-    It 'uses bundled standards without repository settings or injected input defaults' {
+    It 'uses action standards without repository settings or injected input defaults' {
         $output = (& $mainPath) -join "`n"
 
         $output | Should -Match 'Default bump:\s+\[patch\]'
@@ -349,47 +349,50 @@ WhatIf: true
         Should -Invoke git -Times 0 -Exactly
     }
 
-    It 'validates the action-owned standards file when it is <BundleState>' -ForEach @(
-        @{ BundleState = 'valid'; Message = $null }
-        @{ BundleState = 'missing'; Message = '*release.settings.yml*' }
-        @{ BundleState = 'empty'; Message = '*Bundled release defaults*must be a mapping*' }
-        @{ BundleState = 'scalar'; Message = '*Bundled release defaults*must be a mapping*' }
-        @{ BundleState = 'unknown'; Message = '*Unsupported release setting*DefaultBunp*' }
-        @{ BundleState = 'null value'; Message = '*WhatIf*true or false*' }
-        @{ BundleState = 'invalid bump'; Message = '*Invalid DefaultBump*' }
-        @{ BundleState = 'incomplete'; Message = '*standard defaults*missing*WhatIf*' }
+    It 'validates metadata-owned standards when they are <StandardsState>' -ForEach @(
+        @{ StandardsState = 'valid'; Message = $null }
+        @{ StandardsState = 'missing'; Message = '*action release standards*YAML mapping*' }
+        @{ StandardsState = 'empty'; Message = '*action release standards*YAML mapping*' }
+        @{ StandardsState = 'scalar'; Message = '*action release standards*mapping*' }
+        @{ StandardsState = 'unknown'; Message = '*Unsupported release setting*DefaultBunp*' }
+        @{ StandardsState = 'null value'; Message = '*WhatIf*true or false*' }
+        @{ StandardsState = 'invalid bump'; Message = '*Invalid DefaultBump*' }
+        @{ StandardsState = 'incomplete'; Message = '*standard defaults*missing*WhatIf*' }
     ) {
-        $bundleDirectory = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N'))
-        $bundleSource = Join-Path -Path $bundleDirectory -ChildPath 'src'
-        $null = New-Item -Path $bundleSource -ItemType Directory -Force
-        Copy-Item -LiteralPath $mainPath, $helperPath -Destination $bundleSource
-        Copy-Item -LiteralPath $actionPath -Destination (Join-Path -Path $bundleDirectory -ChildPath 'action.yml')
-        $bundleData = ConvertFrom-Yaml -Yaml $bundleSettingsYaml
-        switch ($BundleState) {
-            'unknown' { $bundleData.DefaultBunp = 'minor' }
-            'null value' { $bundleData.WhatIf = $null }
-            'invalid bump' { $bundleData.DefaultBump = 'date' }
-            'incomplete' { $bundleData.Remove('WhatIf') }
+        $fixtureDirectory = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N'))
+        $fixtureSource = Join-Path -Path $fixtureDirectory -ChildPath 'src'
+        $null = New-Item -Path $fixtureSource -ItemType Directory -Force
+        Copy-Item -LiteralPath $mainPath, $helperPath -Destination $fixtureSource
+        $fixtureMetadata = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $actionPath -Raw)
+        $standardData = ConvertFrom-Yaml -Yaml $fixtureStandardsYaml
+        switch ($StandardsState) {
+            'unknown' { $standardData.DefaultBunp = 'minor' }
+            'null value' { $standardData.WhatIf = $null }
+            'invalid bump' { $standardData.DefaultBump = 'date' }
+            'incomplete' { $standardData.Remove('WhatIf') }
         }
-        $bundleYaml = ConvertTo-Yaml -Data $bundleData
-        if ($BundleState -eq 'empty') {
-            $bundleYaml = ''
-        } elseif ($BundleState -eq 'scalar') {
-            $bundleYaml = 'minor'
+        $standardYaml = ConvertTo-Yaml -Data $standardData
+        if ($StandardsState -eq 'empty') {
+            $standardYaml = ''
+        } elseif ($StandardsState -eq 'scalar') {
+            $standardYaml = 'minor'
         }
-        if ($BundleState -ne 'missing') {
-            $bundleYaml | Set-Content -LiteralPath (Join-Path -Path $bundleSource -ChildPath 'release.settings.yml')
+        $fixtureMetadata.runs.steps[0].env.PSMODULE_AUTO_RELEASE_DEFAULT_SETTINGS = $standardYaml
+        if ($StandardsState -eq 'missing') {
+            $fixtureMetadata.runs.steps[0].env.Remove('PSMODULE_AUTO_RELEASE_DEFAULT_SETTINGS')
         }
-        $bundleMainPath = Join-Path -Path $bundleSource -ChildPath 'main.ps1'
+        ConvertTo-Yaml -Data $fixtureMetadata |
+            Set-Content -LiteralPath (Join-Path -Path $fixtureDirectory -ChildPath 'action.yml')
+        $fixtureMainPath = Join-Path -Path $fixtureSource -ChildPath 'main.ps1'
 
         Push-Location -LiteralPath $TestDrive
         try {
             if ($Message) {
                 $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
-                { & $bundleMainPath } | Should -Throw $Message
+                { & $fixtureMainPath } | Should -Throw $Message
                 Should -Invoke gh -Times 0 -Exactly
             } else {
-                $output = (& $bundleMainPath) -join "`n"
+                $output = (& $fixtureMainPath) -join "`n"
 
                 $output | Should -Match 'Default bump:\s+\[minor\]'
                 $output | Should -Match 'Default bump source:\s+\[SharedDefault\]'
@@ -486,25 +489,44 @@ VersionPrefix: ''
         Should -Invoke git -Times 0 -Exactly
     }
 
-    It 'keeps the repository bump when its named input is <InputState>' -ForEach @(
-        @{ InputState = 'omitted' }
-        @{ InputState = 'empty' }
+    It 'distinguishes existing file policy from a named bump that is <InputState>' -ForEach @(
+        @{
+            InputState      = 'omitted'
+            InputValue      = $null
+            ExpectedBump    = 'major'
+            ExpectedSource  = 'RepositorySetting'
+            ExpectedVersion = 'v3.0.0'
+        }
+        @{
+            InputState      = 'empty'
+            InputValue      = ''
+            ExpectedBump    = 'major'
+            ExpectedSource  = 'RepositorySetting'
+            ExpectedVersion = 'v3.0.0'
+        }
+        @{
+            InputState      = 'equal to the standard'
+            InputValue      = 'patch'
+            ExpectedBump    = 'patch'
+            ExpectedSource  = 'ActionInput'
+            ExpectedVersion = 'v2.0.4'
+        }
     ) {
-        if ($InputState -eq 'empty') {
-            $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = ''
+        if ($null -ne $InputValue) {
+            $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = $InputValue
         }
         'DefaultBump: major' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
 
         $output = (& $mainPath) -join "`n"
 
-        $output | Should -Match 'Default bump:\s+\[major\]'
-        $output | Should -Match 'Default bump source:\s+\[RepositorySetting\]'
-        $output | Should -Match 'gh release create v3\.0\.0 '
+        $output | Should -Match "Default bump:\s+\[$ExpectedBump\]"
+        $output | Should -Match "Default bump source:\s+\[$ExpectedSource\]"
+        $output | Should -Match "gh release create $([regex]::Escape($ExpectedVersion)) "
         Should -Invoke gh -Times 2 -Exactly
         Should -Invoke git -Times 0 -Exactly
     }
 
-    It 'keeps bundled policy when all release inputs are empty' {
+    It 'keeps action standards when all release inputs are empty' {
         foreach ($settingName in $releaseSettingNames) {
             [Environment]::SetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$settingName", '')
         }

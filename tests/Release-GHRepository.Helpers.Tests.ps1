@@ -9,8 +9,9 @@ BeforeAll {
     Import-Module -Name powershell-yaml
     $modulePath = Join-Path -Path $PSScriptRoot -ChildPath '../src/Release-GHRepository.Helpers.psm1'
     Import-Module -Name $modulePath -Force
-    $standardSettingsPath = Join-Path -Path $PSScriptRoot -ChildPath '..\src\release.settings.yml'
-    $standardSettings = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $standardSettingsPath -Raw) -Ordered
+    $actionPath = Join-Path -Path $PSScriptRoot -ChildPath '..\action.yml'
+    $actionDefinition = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $actionPath -Raw)
+    $standardSettings = ConvertFrom-Yaml -Yaml $actionDefinition.runs.steps[0].env.PSMODULE_AUTO_RELEASE_DEFAULT_SETTINGS -Ordered
 }
 
 Describe 'Resolve-ReleaseConfiguration' {
@@ -260,7 +261,7 @@ Describe 'Resolve-ReleaseConfiguration' {
             Should -Throw '*Invalid DefaultBump*'
     }
 
-    It 'rejects an <SchemaCase> bundled standards mapping before applying valid overrides' -ForEach @(
+    It 'rejects an <SchemaCase> action standards mapping before applying valid overrides' -ForEach @(
         @{ SchemaCase = 'unknown setting in the'; Message = '*Unsupported release setting*DefaultBunp*' }
         @{ SchemaCase = 'incomplete'; Message = '*standard defaults*missing*WhatIf*' }
     ) {

@@ -39,11 +39,14 @@ LogGroup 'Loading libraries' {
 LogGroup 'Set configuration' {
     $actionDefinitionPath = Join-Path -Path $PSScriptRoot -ChildPath '..\action.yml'
     $actionDefinition = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $actionDefinitionPath -Raw)
-    $standardSettingsPath = Join-Path -Path $PSScriptRoot -ChildPath 'release.settings.yml'
-    Write-Output "Reading bundled release defaults [$standardSettingsPath]"
-    $actionDefaults = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $standardSettingsPath -Raw) -Ordered
+    $standardSettingsYaml = $actionDefinition.runs.steps[0].env.PSMODULE_AUTO_RELEASE_DEFAULT_SETTINGS
+    if ($standardSettingsYaml -isnot [string] -or [string]::IsNullOrWhiteSpace($standardSettingsYaml)) {
+        throw 'The action release standards must be a nonempty YAML mapping.'
+    }
+    Write-Output "Reading action release standards [$actionDefinitionPath]"
+    $actionDefaults = ConvertFrom-Yaml -Yaml $standardSettingsYaml -Ordered
     if ($actionDefaults -isnot [System.Collections.IDictionary]) {
-        throw "Bundled release defaults [$standardSettingsPath] must be a mapping of supported settings."
+        throw 'The action release standards must be a mapping of supported settings.'
     }
     $actionInputs = @{}
     foreach ($name in $actionDefaults.Keys) {
