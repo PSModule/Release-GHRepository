@@ -136,6 +136,32 @@ WhatIf: true
         Should -Invoke git -Times 0 -Exactly
     }
 
+    It 'inherits conventional-file settings when named inputs select inherit' {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'inherit'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup = 'inherit'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix = 'inherit'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = 'inherit'
+        @'
+DefaultBump: minor
+AutoCleanup: false
+VersionPrefix: ''
+DatePrereleaseFormat: ''
+WhatIf: true
+'@ | Set-Content -LiteralPath '.github\release.settings.yml'
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'Reading from configuration file .*release\.settings\.yml'
+        $output | Should -Match 'Default bump:\s+\[minor\]'
+        $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
+        $output | Should -Match 'Version prefix:\s+\[\]'
+        $output | Should -Match 'Date-based prerelease format:\s+\[\]'
+        $output | Should -Match 'gh release create 2\.1\.0 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
     It 'inherits valid defaults when the conventional settings file is intentionally absent' {
         Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
 
