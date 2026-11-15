@@ -275,26 +275,26 @@ WhatIf: false
         Should -Invoke git -Times 0 -Exactly
     }
 
-    It 'applies named inputs over the conventional file before an owned bump' {
+    It 'applies an explicit standard-valued input before an owned bump' {
         Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
-        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'minor'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
         $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup = 'false'
         @'
 DefaultBump: major
 AutoCleanup: true
 WhatIf: true
 '@ | Set-Content -LiteralPath '.github\release.settings.yml'
-        $githubEvent.pull_request.labels = @(@{ name = 'release:patch' })
+        $githubEvent.pull_request.labels = @(@{ name = 'release:minor' })
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 
         $output = (& $mainPath) -join "`n"
 
         $output | Should -Match 'Reading settings file .*release\.settings\.yml'
-        $output | Should -Match 'Default bump:\s+\[minor\]'
+        $output | Should -Match 'Default bump:\s+\[patch\]'
         $output | Should -Match 'Default bump source:\s+\[ActionInput\]'
         $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
-        $output | Should -Match 'Bump source:\s+\[release:patch\]'
-        $output | Should -Match 'gh release create v2\.0\.4 '
+        $output | Should -Match 'Bump source:\s+\[release:minor\]'
+        $output | Should -Match 'gh release create v2\.1\.0 '
         Should -Invoke gh -Times 2 -Exactly
         Should -Invoke git -Times 0 -Exactly
     }
