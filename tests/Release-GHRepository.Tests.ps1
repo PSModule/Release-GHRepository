@@ -116,9 +116,9 @@ Describe 'Release-GHRepository caller compatibility' {
     }
 
     It 'declares release.settings.yml as the only conventional settings default' {
-        $actionDefinition.inputs.ConfigurationFile.default | Should -BeExactly '.github\release.settings.yml'
-        $actionDefinition.runs.steps[0].env.PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile |
-            Should -BeExactly '${{ inputs.ConfigurationFile }}'
+        $actionDefinition.inputs.SettingsFilePath.default | Should -BeExactly '.github\release.settings.yml'
+        $actionDefinition.runs.steps[0].env.PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath |
+            Should -BeExactly '${{ inputs.SettingsFilePath }}'
     }
 
     It 'reads the declared default without an injected ConfigurationFile input' {
