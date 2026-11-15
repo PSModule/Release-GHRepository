@@ -306,7 +306,8 @@ function ConvertTo-ReleaseBump {
 
         .DESCRIPTION
         Validate DefaultBump with case-sensitive matching and return the
-        corresponding internal Patch, Minor, or Major value.
+        corresponding internal Patch, Minor, or Major value. Require the
+        configured value rather than choosing a policy default.
 
         .EXAMPLE
         ConvertTo-ReleaseBump -DefaultBump 'minor'
@@ -326,11 +327,11 @@ function ConvertTo-ReleaseBump {
     [OutputType([string])]
     [CmdletBinding()]
     param(
-        # The fallback bump used when no explicit release bump or skip label exists.
+        # The validated effective bump supplied by the settings resolver.
         [Parameter()]
         [AllowNull()]
         [AllowEmptyString()]
-        [string] $DefaultBump = 'patch'
+        [string] $DefaultBump
     )
 
     $validDefaultBumps = @('patch', 'minor', 'major')
@@ -354,15 +355,16 @@ function Resolve-ReleaseDecision {
         Evaluate only the five labels owned by Release-GHRepository. An explicit
         bump label overrides DefaultBump, release:prerelease selects prerelease
         mode, and release:skip suppresses publication. Reject conflicting owned-label
-        combinations.
+        combinations. Require the validated effective DefaultBump; this pure
+        helper does not load standards or choose an automatic policy.
 
         .EXAMPLE
-        Resolve-ReleaseDecision -Labels @('release:minor')
+        Resolve-ReleaseDecision -Labels @('release:minor') -DefaultBump 'major'
 
         Return a Minor stable-release decision.
 
         .EXAMPLE
-        Resolve-ReleaseDecision -Labels @('release:patch', 'release:prerelease')
+        Resolve-ReleaseDecision -Labels @('release:patch', 'release:prerelease') -DefaultBump 'minor'
 
         Return a Patch prerelease decision.
 
@@ -390,11 +392,11 @@ function Resolve-ReleaseDecision {
         [AllowNull()]
         [string[]] $Labels,
 
-        # The fallback bump used when no explicit release bump or skip label exists.
+        # The validated effective bump supplied by the settings resolver.
         [Parameter()]
         [AllowNull()]
         [AllowEmptyString()]
-        [string] $DefaultBump = 'patch',
+        [string] $DefaultBump,
 
         # The validated settings layer that supplies the effective default.
         [Parameter()]
@@ -536,13 +538,13 @@ function Test-PrereleaseCreation {
         and the pull request remains open.
 
         .EXAMPLE
-        $decision = Resolve-ReleaseDecision -Labels @('release:patch', 'release:prerelease')
+        $decision = Resolve-ReleaseDecision -Labels @('release:patch', 'release:prerelease') -DefaultBump 'minor'
         Test-PrereleaseCreation -ReleaseDecision $decision
 
         Return true for an open pull request carrying a valid prerelease decision.
 
         .EXAMPLE
-        $decision = Resolve-ReleaseDecision -Labels @('release:patch', 'release:prerelease')
+        $decision = Resolve-ReleaseDecision -Labels @('release:patch', 'release:prerelease') -DefaultBump 'minor'
         Test-PrereleaseCreation -ReleaseDecision $decision -PullRequestClosed
 
         Return false after the pull request closes.

@@ -9,13 +9,14 @@ BeforeAll {
     Import-Module -Name powershell-yaml
     $modulePath = Join-Path -Path $PSScriptRoot -ChildPath '../src/Release-GHRepository.Helpers.psm1'
     Import-Module -Name $modulePath -Force
+    $standardSettingsPath = Join-Path -Path $PSScriptRoot -ChildPath '..\src\release.settings.yml'
+    $standardSettings = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $standardSettingsPath -Raw) -Ordered
 }
 
 Describe 'Resolve-ReleaseConfiguration' {
     BeforeAll {
-        $settingsPath = Join-Path -Path $PSScriptRoot -ChildPath '..\src\release.settings.yml'
         $resolveConfiguration = @{
-            Defaults = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $settingsPath -Raw) -Ordered
+            Defaults = $standardSettings
         }
     }
 
@@ -489,8 +490,8 @@ Describe 'ConvertTo-ReleaseBump' {
         ConvertTo-ReleaseBump -DefaultBump $DefaultBump | Should -BeExactly $Expected
     }
 
-    It 'uses patch when DefaultBump is omitted' {
-        ConvertTo-ReleaseBump | Should -BeExactly 'Patch'
+    It 'rejects omitted policy instead of selecting its own patch fallback' {
+        { ConvertTo-ReleaseBump } | Should -Throw '*Invalid DefaultBump*'
     }
 
     It 'rejects invalid DefaultBump [<DefaultBump>]' -ForEach @(
@@ -571,7 +572,7 @@ Describe 'Resolve-ReleaseDecision' {
             Skip       = $true
         }
     ) {
-        $result = Resolve-ReleaseDecision -Labels $Labels
+        $result = Resolve-ReleaseDecision -Labels $Labels -DefaultBump $standardSettings.DefaultBump
 
         $result.Bump | Should -BeExactly $Bump
         $result.Prerelease | Should -Be $Prerelease
@@ -606,7 +607,14 @@ Describe 'Resolve-ReleaseDecision' {
             Message = '*release:skip must not be combined*'
         }
     ) {
-        { Resolve-ReleaseDecision -Labels $Labels } | Should -Throw $Message
+        { Resolve-ReleaseDecision -Labels $Labels -DefaultBump $standardSettings.DefaultBump } | Should -Throw $Message
+    }
+
+    It 'requires resolved policy even with <LabelState>' -ForEach @(
+        @{ LabelState = 'no owned label'; Labels = @() }
+        @{ LabelState = 'an owned major label'; Labels = @('release:major') }
+    ) {
+        { Resolve-ReleaseDecision -Labels $Labels } | Should -Throw '*Invalid DefaultBump*'
     }
 
     It 'resolves <Expected> from <Name> with the <DefaultBump> default' -ForEach @(
@@ -902,7 +910,7 @@ Describe 'Resolve-ReleaseDecision' {
                 Expected = $false
             }
         ) {
-            $decision = Resolve-ReleaseDecision -Labels $Labels
+            $decision = Resolve-ReleaseDecision -Labels $Labels -DefaultBump $standardSettings.DefaultBump
             $result = Test-PrereleaseCreation -ReleaseDecision $decision -PullRequestClosed:$Closed
 
             $result | Should -Be $Expected
