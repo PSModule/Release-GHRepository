@@ -39,25 +39,14 @@ LogGroup 'Loading libraries' {
 LogGroup 'Set configuration' {
     $actionDefinitionPath = Join-Path -Path $PSScriptRoot -ChildPath '..\action.yml'
     $actionDefinition = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $actionDefinitionPath -Raw)
-    $settingNames = @(
-        'AutoCleanup'
-        'DefaultBump'
-        'CreateMajorTag'
-        'CreateMinorTag'
-        'DatePrereleaseFormat'
-        'IncrementalPrerelease'
-        'UsePRTitleAsReleaseName'
-        'UsePRBodyAsReleaseNotes'
-        'UsePRTitleAsNotesHeading'
-        'VersionPrefix'
-        'WhatIf'
-    )
-    $actionDefaults = [ordered]@{}
+    $actionDefaults = ConvertFrom-Yaml -Yaml $actionDefinition.runs.steps[0].env.PSMODULE_AUTO_RELEASE_DEFAULT_SETTINGS
+    if ($actionDefaults -isnot [System.Collections.IDictionary]) {
+        throw 'The action release defaults must be a mapping of supported settings.'
+    }
     $actionInputs = @{}
-    foreach ($name in $settingNames) {
-        $actionDefaults[$name] = $actionDefinition.inputs[$name].default
+    foreach ($name in $actionDefaults.Keys) {
         $inputValue = [Environment]::GetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$name")
-        if ($null -ne $inputValue) {
+        if ($null -ne $inputValue -and $inputValue -cne $actionDefinition.inputs[$name].default) {
             $actionInputs[$name] = $inputValue
         }
     }
@@ -80,19 +69,10 @@ LogGroup 'Set configuration' {
         }
     }
 
-    $callerOverridesYaml = [Environment]::GetEnvironmentVariable('PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides')
-    if ($null -eq $callerOverridesYaml) {
-        $callerOverridesYaml = $actionDefinition.inputs.CallerOverrides.default
-    }
-    $callerOverrides = ConvertFrom-Yaml -Yaml $callerOverridesYaml
-    if ($callerOverrides -isnot [System.Collections.IDictionary]) {
-        throw 'CallerOverrides must be a mapping of supported release settings.'
-    }
     $configurationParameters = @{
-        Defaults        = $actionDefaults
-        Inputs          = $actionInputs
-        Configuration   = $configuration
-        CallerOverrides = $callerOverrides
+        Defaults      = $actionDefaults
+        Inputs        = $actionInputs
+        Configuration = $configuration
     }
     $settings = Resolve-ReleaseConfiguration @configurationParameters
     $autoCleanup = $settings.AutoCleanup

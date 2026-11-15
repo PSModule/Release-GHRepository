@@ -86,16 +86,16 @@ function Resolve-ReleaseConfiguration {
         Resolve validated release settings from interface defaults and overrides.
 
         .DESCRIPTION
-        Apply scalar action inputs over defaults declared in action.yml, then
-        repository settings, then explicit CallerOverrides. Validate every
-        supplied layer so invalid values cannot be masked. Preserve false and
-        empty text overrides and record the effective default-bump source.
+        Apply repository settings over shared defaults declared in action.yml,
+        then explicit named action inputs. Validate every supplied layer so
+        invalid values cannot be masked. Preserve false and empty text values
+        and record the effective default-bump source.
 
         .EXAMPLE
         $parameters = @{
-            Defaults        = $actionDefaults
-            Configuration   = @{ DefaultBump = 'major' }
-            CallerOverrides = @{ DefaultBump = 'minor' }
+            Defaults      = $actionDefaults
+            Configuration = @{ DefaultBump = 'major' }
+            Inputs        = @{ DefaultBump = 'minor' }
         }
         Resolve-ReleaseConfiguration @parameters
 
@@ -126,28 +126,17 @@ function Resolve-ReleaseConfiguration {
         # The parsed configuration file, which must be a mapping when supplied.
         [Parameter()]
         [AllowNull()]
-        [object] $Configuration,
-
-        # Explicit invocation overrides, distinct from injected scalar defaults.
-        [Parameter()]
-        [AllowNull()]
-        [AllowEmptyString()]
-        [object] $CallerOverrides
+        [object] $Configuration
     )
 
     if ($null -ne $Configuration -and $Configuration -isnot [System.Collections.IDictionary]) {
         throw 'Release configuration must be a mapping of supported settings.'
     }
-    if ($PSBoundParameters.ContainsKey('CallerOverrides') -and $CallerOverrides -isnot [System.Collections.IDictionary]) {
-        throw 'CallerOverrides must be a mapping of supported release settings.'
-    }
-
     $retiredSettings = @('AutoPatching', 'IgnoreLabels', 'MajorLabels', 'MinorLabels', 'PatchLabels')
     $layers = @(
         [PSCustomObject]@{ Source = 'SharedDefault'; Values = $Defaults }
-        [PSCustomObject]@{ Source = 'ActionInput'; Values = $Inputs }
         [PSCustomObject]@{ Source = 'RepositorySetting'; Values = $Configuration }
-        [PSCustomObject]@{ Source = 'CallerOverride'; Values = $CallerOverrides }
+        [PSCustomObject]@{ Source = 'ActionInput'; Values = $Inputs }
     )
     $settings = [ordered]@{}
     $defaultBumpSource = 'SharedDefault'
@@ -165,9 +154,6 @@ function Resolve-ReleaseConfiguration {
             $settings[$name] = ConvertTo-ReleaseSettingValue -Name $name -Value $layer.Values[$name]
             if ($name -eq 'DefaultBump') {
                 $defaultBumpSource = $layer.Source
-                if ($layer.Source -eq 'ActionInput' -and $layer.Values[$name] -ceq $Defaults[$name]) {
-                    $defaultBumpSource = 'SharedDefault'
-                }
             }
         }
     }
@@ -389,7 +375,7 @@ function Resolve-ReleaseDecision {
 
         # The validated settings layer that supplies the effective default.
         [Parameter()]
-        [ValidateSet('SharedDefault', 'ActionInput', 'RepositorySetting', 'CallerOverride')]
+        [ValidateSet('SharedDefault', 'ActionInput', 'RepositorySetting')]
         [string] $DefaultBumpSource = 'SharedDefault'
     )
 

@@ -10,6 +10,8 @@ $ErrorActionPreference = 'Stop'
 BeforeAll {
     Import-Module -Name GitHub, powershell-yaml, PSSemVer
     $mainPath = Join-Path -Path $PSScriptRoot -ChildPath '..\src\main.ps1'
+    $actionPath = Join-Path -Path $PSScriptRoot -ChildPath '..\action.yml'
+    $actionDefinition = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $actionPath -Raw)
     $headSha = '0123456789012345678901234567890123456789'
     $authoredBody = @'
 This release preserves the source-bound adoption record.
@@ -37,7 +39,6 @@ Describe 'Release-GHRepository caller compatibility' {
             'GITHUB_REPOSITORY'
             'GITHUB_EVENT_PATH'
             'PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile'
-            'PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides'
             'PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup'
             'PSMODULE_AUTO_RELEASE_INPUT_DefaultBump'
             'PSMODULE_AUTO_RELEASE_INPUT_CreateMajorTag'
@@ -79,6 +80,7 @@ Describe 'Release-GHRepository caller compatibility' {
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 
         $releaseRecordsJson = '[{"tagName":"v2.0.3","isLatest":true,"isPrerelease":false}]'
+        $simulateLabelWrites = $false
         Mock Install-PSResource {}
         Mock Write-GitHubNotice {}
         Mock git { throw 'A caller compatibility test must never invoke git.' }
@@ -88,6 +90,8 @@ Describe 'Release-GHRepository caller compatibility' {
                 '{"defaultBranchRef":{"name":"main"}}'
             } elseif ($args[0] -eq 'release' -and $args[1] -eq 'list') {
                 $releaseRecordsJson
+            } elseif ($simulateLabelWrites -and $args[0] -eq 'label' -and $args[1] -eq 'create') {
+                return
             } else {
                 throw "A caller compatibility test must never mutate GitHub: gh $($args -join ' ')"
             }
@@ -128,9 +132,13 @@ Describe 'Release-GHRepository caller compatibility' {
         Should -Invoke gh -Times 2 -Exactly
     }
 
-    It 'uses file overrides, including empty text and false, with the real YAML parser' {
-        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'major'
-        $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = 'yyyyMMddHHmm'
+    It 'inherits repository policy when the runner injects inherit input defaults' {
+        foreach ($entry in $actionDefinition.inputs.GetEnumerator()) {
+            if ($entry.Value.default -eq 'inherit') {
+                [Environment]::SetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$($entry.Key)", $entry.Value.default)
+            }
+        }
+        $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'true'
         @'
 DefaultBump: minor
 AutoCleanup: false
@@ -144,6 +152,36 @@ VersionPrefix: ''
         $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
         $output | Should -Match 'Date-based prerelease format:\s+\[\]'
         $output | Should -Match 'gh release create 2\.1\.0 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'treats inherit as omission instead of masking repository policy' {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'inherit'
+        'DefaultBump: major' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'Default bump:\s+\[major\]'
+        $output | Should -Match 'Default bump source:\s+\[RepositorySetting\]'
+        $output | Should -Match 'gh release create v3\.0\.0 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'inherits shared policy when all release inputs use their runner defaults' {
+        foreach ($entry in $actionDefinition.inputs.GetEnumerator()) {
+            if ($entry.Value.default -eq 'inherit') {
+                [Environment]::SetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$($entry.Key)", $entry.Value.default)
+            }
+        }
+        $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'true'
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'Default bump:\s+\[patch\]'
+        $output | Should -Match 'Default bump source:\s+\[SharedDefault\]'
+        $output | Should -Match 'gh release create v2\.0\.4 '
         Should -Invoke gh -Times 2 -Exactly
     }
 
@@ -177,31 +215,33 @@ VersionPrefix: ''
         $output | Should -Match 'gh release create v2\.1\.0 '
     }
 
-    It 'applies typed YAML caller overrides without changing the scalar input/file precedence' {
-        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
+    It 'lets a named DefaultBump override repository policy' {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'minor'
         'DefaultBump: major' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
-        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = 'DefaultBump: minor'
 
         $output = (& $mainPath) -join "`n"
 
         $output | Should -Match 'Default bump:\s+\[minor\]'
-        $output | Should -Match 'Default bump source:\s+\[CallerOverride\]'
-        $output | Should -Match 'Bump source:\s+\[CallerOverride\]'
+        $output | Should -Match 'Default bump source:\s+\[ActionInput\]'
+        $output | Should -Match 'Bump source:\s+\[ActionInput\]'
         $output | Should -Match 'gh release create v2\.1\.0 '
         Should -Invoke gh -Times 2 -Exactly
     }
 
-    It 'accepts JSON caller overrides including false and empty strings' {
+    It 'preserves named patch, false and empty values instead of applying repository values' {
         @'
 DefaultBump: major
 AutoCleanup: true
 VersionPrefix: v
 '@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
-        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = '{"DefaultBump":"patch","AutoCleanup":false,"VersionPrefix":""}'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup = 'false'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix = ''
 
         $output = (& $mainPath) -join "`n"
 
         $output | Should -Match 'Default bump:\s+\[patch\]'
+        $output | Should -Match 'Default bump source:\s+\[ActionInput\]'
         $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
         $output | Should -Match 'gh release create 2\.0\.4 '
         Should -Invoke gh -Times 2 -Exactly
@@ -209,7 +249,7 @@ VersionPrefix: v
 
     It 'does not mask an invalid file value with a valid explicit caller override' {
         'DefaultBump: invalid' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
-        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = 'DefaultBump: patch'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
 
         { & $mainPath } | Should -Throw '*DefaultBump*'
         Should -Invoke gh -Times 0 -Exactly
@@ -217,7 +257,6 @@ VersionPrefix: v
 
     It 'keeps validation read-only when explicit WhatIf overrides a false repository setting' {
         'WhatIf: false' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
-        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = 'WhatIf: true'
 
         $output = (& $mainPath) -join "`n"
 
@@ -227,15 +266,44 @@ VersionPrefix: v
         Should -Invoke git -Times 0 -Exactly
     }
 
-    It 'rejects invalid caller overrides before contacting GitHub' -ForEach @(
-        @{ Overrides = ''; Message = '*CallerOverrides must be a mapping*' }
-        @{ Overrides = 'null'; Message = '*CallerOverrides must be a mapping*' }
-        @{ Overrides = '- patch'; Message = '*CallerOverrides must be a mapping*' }
-        @{ Overrides = 'DefaultBump: date'; Message = '*DefaultBump*' }
-        @{ Overrides = 'DefaultBump: null'; Message = '*DefaultBump*' }
-        @{ Overrides = 'WhatIf: invalid'; Message = '*WhatIf*true or false*' }
+    It 'preserves an explicit empty date format over a repository format' {
+        'DatePrereleaseFormat: yyyyMMdd' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = ''
+        $githubEvent.pull_request.labels = @(@{ name = 'release:prerelease' })
+        $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'Date-based prerelease format:\s+\[\]'
+        $output | Should -Match 'gh release create v2\.0\.4-featurecaller\.1 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'accepts explicit false for WhatIf as a real override with only simulated label writes' {
+        'WhatIf: true' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'false'
+        $simulateLabelWrites = $true
+        $githubEvent.pull_request.labels = @(@{ name = 'release:skip' })
+        $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'What if mode:\s+\[False\]'
+        $output | Should -Match 'Skipping release creation\.'
+        Should -Invoke gh -Times 5 -Exactly -ParameterFilter { $args[0] -eq 'label' -and $args[1] -eq 'create' }
+        Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[0] -eq 'release' -and $args[1] -eq 'create' }
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'rejects invalid named inputs before contacting GitHub' -ForEach @(
+        @{ InputName = 'DefaultBump'; Value = ''; Message = '*DefaultBump*' }
+        @{ InputName = 'DefaultBump'; Value = 'date'; Message = '*DefaultBump*' }
+        @{ InputName = 'DefaultBump'; Value = 'Inherit'; Message = '*DefaultBump*' }
+        @{ InputName = 'WhatIf'; Value = ''; Message = '*WhatIf*true or false*' }
+        @{ InputName = 'WhatIf'; Value = 'invalid'; Message = '*WhatIf*true or false*' }
     ) {
-        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = $Overrides
+        [Environment]::SetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$InputName", $Value)
 
         { & $mainPath } | Should -Throw $Message
         Should -Invoke gh -Times 0 -Exactly
