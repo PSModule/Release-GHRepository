@@ -74,7 +74,7 @@ jobs:
           '@ | Set-Content -LiteralPath $settingsFilePath
           "path=$settingsFilePath" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
 
-      - name: Action-Test - Named overrides
+      - name: Action-Test - File policy and named inputs
         uses: ./
         with:
           SettingsFilePath: ${{ steps.caller-settings.outputs.path }}

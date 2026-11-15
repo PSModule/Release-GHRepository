@@ -10,8 +10,35 @@ $ErrorActionPreference = 'Stop'
 BeforeAll {
     Import-Module -Name GitHub, powershell-yaml, PSSemVer
     $mainPath = Join-Path -Path $PSScriptRoot -ChildPath '..\src\main.ps1'
+    $helperPath = Join-Path -Path $PSScriptRoot -ChildPath '..\src\Release-GHRepository.Helpers.psm1'
     $actionPath = Join-Path -Path $PSScriptRoot -ChildPath '..\action.yml'
     $actionDefinition = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $actionPath -Raw)
+    $releaseSettingNames = @(
+        'AutoCleanup'
+        'DefaultBump'
+        'CreateMajorTag'
+        'CreateMinorTag'
+        'DatePrereleaseFormat'
+        'IncrementalPrerelease'
+        'UsePRTitleAsReleaseName'
+        'UsePRBodyAsReleaseNotes'
+        'UsePRTitleAsNotesHeading'
+        'VersionPrefix'
+        'WhatIf'
+    )
+    $bundleSettingsYaml = @'
+AutoCleanup: false
+DefaultBump: minor
+CreateMajorTag: true
+CreateMinorTag: true
+DatePrereleaseFormat: ''
+IncrementalPrerelease: true
+UsePRTitleAsReleaseName: false
+UsePRBodyAsReleaseNotes: true
+UsePRTitleAsNotesHeading: true
+VersionPrefix: v
+WhatIf: false
+'@
     $headSha = '0123456789012345678901234567890123456789'
     $authoredBody = @'
 This release preserves the source-bound adoption record.
@@ -111,7 +138,7 @@ Describe 'Release-GHRepository caller compatibility' {
         }
     }
 
-    It 'uses action.yml defaults without relying on the composite wrapper to inject them' {
+    It 'uses bundled standards without repository settings or injected input defaults' {
         $output = (& $mainPath) -join "`n"
 
         $output | Should -Match 'Default bump:\s+\[patch\]'
@@ -120,6 +147,60 @@ Describe 'Release-GHRepository caller compatibility' {
         $output | Should -Match 'gh release create v2\.0\.4 '
         $output.Contains($authoredBody) | Should -BeTrue
         Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'validates the action-owned standards file when it is <BundleState>' -ForEach @(
+        @{ BundleState = 'valid'; Message = $null }
+        @{ BundleState = 'missing'; Message = '*release.settings.yml*' }
+        @{ BundleState = 'empty'; Message = '*Bundled release defaults*must be a mapping*' }
+        @{ BundleState = 'scalar'; Message = '*Bundled release defaults*must be a mapping*' }
+        @{ BundleState = 'unknown'; Message = '*Unsupported release setting*DefaultBunp*' }
+        @{ BundleState = 'null value'; Message = '*WhatIf*true or false*' }
+        @{ BundleState = 'invalid bump'; Message = '*Invalid DefaultBump*' }
+        @{ BundleState = 'incomplete'; Message = '*standard defaults*missing*WhatIf*' }
+    ) {
+        $bundleDirectory = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N'))
+        $bundleSource = Join-Path -Path $bundleDirectory -ChildPath 'src'
+        $null = New-Item -Path $bundleSource -ItemType Directory -Force
+        Copy-Item -LiteralPath $mainPath, $helperPath -Destination $bundleSource
+        Copy-Item -LiteralPath $actionPath -Destination (Join-Path -Path $bundleDirectory -ChildPath 'action.yml')
+        $bundleData = ConvertFrom-Yaml -Yaml $bundleSettingsYaml
+        switch ($BundleState) {
+            'unknown' { $bundleData.DefaultBunp = 'minor' }
+            'null value' { $bundleData.WhatIf = $null }
+            'invalid bump' { $bundleData.DefaultBump = 'date' }
+            'incomplete' { $bundleData.Remove('WhatIf') }
+        }
+        $bundleYaml = ConvertTo-Yaml -Data $bundleData
+        if ($BundleState -eq 'empty') {
+            $bundleYaml = ''
+        } elseif ($BundleState -eq 'scalar') {
+            $bundleYaml = 'minor'
+        }
+        if ($BundleState -ne 'missing') {
+            $bundleYaml | Set-Content -LiteralPath (Join-Path -Path $bundleSource -ChildPath 'release.settings.yml')
+        }
+        $bundleMainPath = Join-Path -Path $bundleSource -ChildPath 'main.ps1'
+
+        Push-Location -LiteralPath $TestDrive
+        try {
+            if ($Message) {
+                $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
+                { & $bundleMainPath } | Should -Throw $Message
+                Should -Invoke gh -Times 0 -Exactly
+            } else {
+                $output = (& $bundleMainPath) -join "`n"
+
+                $output | Should -Match 'Default bump:\s+\[minor\]'
+                $output | Should -Match 'Default bump source:\s+\[SharedDefault\]'
+                $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
+                $output | Should -Match 'gh release create v2\.1\.0 '
+                Should -Invoke gh -Times 2 -Exactly
+            }
+        } finally {
+            Pop-Location
+        }
         Should -Invoke git -Times 0 -Exactly
     }
 
@@ -184,11 +265,9 @@ Describe 'Release-GHRepository caller compatibility' {
         Should -Invoke gh -Times 2 -Exactly
     }
 
-    It 'inherits repository policy when the runner injects inherit input defaults' {
-        foreach ($entry in $actionDefinition.inputs.GetEnumerator()) {
-            if ($entry.Value.default -eq 'inherit') {
-                [Environment]::SetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$($entry.Key)", $entry.Value.default)
-            }
+    It 'keeps repository policy when the runner supplies empty release inputs' {
+        foreach ($settingName in $releaseSettingNames) {
+            [Environment]::SetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$settingName", '')
         }
         $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'true'
         @'
@@ -208,8 +287,13 @@ VersionPrefix: ''
         Should -Invoke git -Times 0 -Exactly
     }
 
-    It 'treats inherit as omission instead of masking repository policy' {
-        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'inherit'
+    It 'keeps the repository bump when its named input is <InputState>' -ForEach @(
+        @{ InputState = 'omitted' }
+        @{ InputState = 'empty' }
+    ) {
+        if ($InputState -eq 'empty') {
+            $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = ''
+        }
         'DefaultBump: major' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
 
         $output = (& $mainPath) -join "`n"
@@ -221,11 +305,9 @@ VersionPrefix: ''
         Should -Invoke git -Times 0 -Exactly
     }
 
-    It 'inherits shared policy when all release inputs use their runner defaults' {
-        foreach ($entry in $actionDefinition.inputs.GetEnumerator()) {
-            if ($entry.Value.default -eq 'inherit') {
-                [Environment]::SetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$($entry.Key)", $entry.Value.default)
-            }
+    It 'keeps bundled policy when all release inputs are empty' {
+        foreach ($settingName in $releaseSettingNames) {
+            [Environment]::SetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$settingName", '')
         }
         $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'true'
 
@@ -280,7 +362,7 @@ VersionPrefix: ''
         Should -Invoke gh -Times 2 -Exactly
     }
 
-    It 'preserves named patch, false and empty values instead of applying repository values' {
+    It 'applies named patch and false while an empty text input keeps file policy' {
         @'
 DefaultBump: major
 AutoCleanup: true
@@ -295,7 +377,8 @@ VersionPrefix: v
         $output | Should -Match 'Default bump:\s+\[patch\]'
         $output | Should -Match 'Default bump source:\s+\[ActionInput\]'
         $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
-        $output | Should -Match 'gh release create 2\.0\.4 '
+        $output | Should -Match 'Version prefix:\s+\[v\]'
+        $output | Should -Match 'gh release create v2\.0\.4 '
         Should -Invoke gh -Times 2 -Exactly
     }
 
@@ -318,16 +401,44 @@ VersionPrefix: v
         Should -Invoke git -Times 0 -Exactly
     }
 
-    It 'preserves an explicit empty date format over a repository format' {
-        'DatePrereleaseFormat: yyyyMMdd' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+    It 'keeps the configured prerelease date format when its input is empty' {
+        @'
+DatePrereleaseFormat: "'fixed'"
+'@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = ''
         $githubEvent.pull_request.labels = @(@{ name = 'release:prerelease' })
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 
         $output = (& $mainPath) -join "`n"
 
-        $output | Should -Match 'Date-based prerelease format:\s+\[\]'
-        $output | Should -Match 'gh release create v2\.0\.4-featurecaller\.1 '
+        $output | Should -Match "Date-based prerelease format:\s+\['fixed'\]"
+        $output | Should -Match 'gh release create v2\.0\.4-featurecaller\.fixed\.1 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'keeps a true file WhatIf policy when its named input is empty' {
+        'WhatIf: true' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+        $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = ''
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'What if mode:\s+\[True\]'
+        $output | Should -Match 'WhatIf: gh label create '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'treats literal inherit as ordinary prefix text rather than an omission marker' {
+        'VersionPrefix: repo-' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+        $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix = 'inherit'
+        $githubEvent.pull_request.labels = @(@{ name = 'release:skip' })
+        $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+
+        $output = (& $mainPath) -join "`n"
+
+        $output | Should -Match 'Version prefix:\s+\[inherit\]'
+        $output | Should -Match 'Skipping release creation\.'
         Should -Invoke gh -Times 2 -Exactly
         Should -Invoke git -Times 0 -Exactly
     }
@@ -349,11 +460,12 @@ VersionPrefix: v
     }
 
     It 'rejects invalid named inputs before contacting GitHub' -ForEach @(
-        @{ InputName = 'DefaultBump'; Value = ''; Message = '*DefaultBump*' }
         @{ InputName = 'DefaultBump'; Value = 'date'; Message = '*DefaultBump*' }
-        @{ InputName = 'DefaultBump'; Value = 'Inherit'; Message = '*DefaultBump*' }
-        @{ InputName = 'WhatIf'; Value = ''; Message = '*WhatIf*true or false*' }
+        @{ InputName = 'DefaultBump'; Value = 'inherit'; Message = '*DefaultBump*' }
+        @{ InputName = 'DefaultBump'; Value = ' '; Message = '*DefaultBump*' }
         @{ InputName = 'WhatIf'; Value = 'invalid'; Message = '*WhatIf*true or false*' }
+        @{ InputName = 'WhatIf'; Value = 'inherit'; Message = '*WhatIf*true or false*' }
+        @{ InputName = 'WhatIf'; Value = ' '; Message = '*WhatIf*true or false*' }
     ) {
         [Environment]::SetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$InputName", $Value)
 

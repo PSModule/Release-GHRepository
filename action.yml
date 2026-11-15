@@ -9,55 +9,44 @@ inputs:
   AutoCleanup:
     description: Delete pull-request prereleases and their tags after the pull request closes.
     required: false
-    default: inherit
   SettingsFilePath:
     description: >-
       The path to the repository settings file. Explicit named release-setting inputs override file values;
-      omitted inputs inherit repository settings and shared defaults.
+      omitted or empty release-setting inputs retain file policy and bundled standards.
     required: false
     default: .github\auto-release.yml
   DefaultBump:
     description: >-
       The release bump without an owned bump or skip label. Accepts exactly patch, minor, or major.
-      Omit or use inherit for repository policy, then the shared patch default.
+      Omit or leave empty for repository policy, then the bundled patch standard.
     required: false
-    default: inherit
   CreateMajorTag:
     description: Control whether to create a major tag when a pull request is merged into the main branch.
     required: false
-    default: inherit
   CreateMinorTag:
     description: Control whether to create a minor tag when a pull request is merged into the main branch.
     required: false
-    default: inherit
   DatePrereleaseFormat:
     description: If specified, uses a date based prerelease scheme. The format should be a valid .NET format string like 'yyyyMMddHHmm'.
     required: false
-    default: inherit
   IncrementalPrerelease:
     description: Control whether to automatically increment the prerelease number. If disabled, the action will ensure only one prerelease exists for a given branch.
     required: false
-    default: inherit
   UsePRTitleAsReleaseName:
     description: When enabled, uses the pull request title as the name for the GitHub release.
     required: false
-    default: inherit
   UsePRBodyAsReleaseNotes:
     description: When enabled, uses the pull request body as the release notes for the GitHub release.
     required: false
-    default: inherit
   UsePRTitleAsNotesHeading:
     description: When enabled, the release notes will begin with the pull request title as a H1 heading followed by the pull request body. The title will reference the pull request number.
     required: false
-    default: inherit
   VersionPrefix:
     description: The prefix to use for the version number.
     required: false
-    default: inherit
   WhatIf:
     description: Log planned label, release, tag, and comment changes without mutating repository state.
     required: false
-    default: inherit
   Debug:
     description: Enable debug output.
     required: false
@@ -84,18 +73,6 @@ runs:
     - name: Release-GHRepository
       uses: PSModule/GitHub-Script@8083ec1f733f00357ee4d0db0c6056686e483bc0 # v1.9.0
       env:
-        PSMODULE_AUTO_RELEASE_DEFAULT_SETTINGS: |
-          AutoCleanup: true
-          DefaultBump: patch
-          CreateMajorTag: true
-          CreateMinorTag: true
-          DatePrereleaseFormat: ''
-          IncrementalPrerelease: true
-          UsePRTitleAsReleaseName: false
-          UsePRBodyAsReleaseNotes: true
-          UsePRTitleAsNotesHeading: true
-          VersionPrefix: v
-          WhatIf: false
         PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup: ${{ inputs.AutoCleanup }}
         PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath: ${{ inputs.SettingsFilePath }}
         PSMODULE_AUTO_RELEASE_INPUT_DefaultBump: ${{ inputs.DefaultBump }}

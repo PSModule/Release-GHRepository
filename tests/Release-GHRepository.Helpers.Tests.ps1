@@ -6,26 +6,16 @@
 param()
 
 BeforeAll {
+    Import-Module -Name powershell-yaml
     $modulePath = Join-Path -Path $PSScriptRoot -ChildPath '../src/Release-GHRepository.Helpers.psm1'
     Import-Module -Name $modulePath -Force
 }
 
 Describe 'Resolve-ReleaseConfiguration' {
     BeforeAll {
+        $settingsPath = Join-Path -Path $PSScriptRoot -ChildPath '..\src\release.settings.yml'
         $resolveConfiguration = @{
-            Defaults = [ordered]@{
-                AutoCleanup              = 'true'
-                DefaultBump              = 'patch'
-                CreateMajorTag           = 'true'
-                CreateMinorTag           = 'true'
-                DatePrereleaseFormat     = ''
-                IncrementalPrerelease    = 'true'
-                UsePRTitleAsReleaseName  = 'false'
-                UsePRBodyAsReleaseNotes  = 'true'
-                UsePRTitleAsNotesHeading = 'true'
-                VersionPrefix            = 'v'
-                WhatIf                   = 'false'
-            }
+            Defaults = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $settingsPath -Raw) -Ordered
         }
     }
 
@@ -87,20 +77,20 @@ Describe 'Resolve-ReleaseConfiguration' {
         $decision.DefaultBumpApplied | Should -BeFalse
     }
 
-    It 'preserves an empty caller value for <Name>' -ForEach @(
-        @{ Name = 'VersionPrefix' }
-        @{ Name = 'DatePrereleaseFormat' }
+    It 'keeps file text when the named input is empty for <Name>' -ForEach @(
+        @{ Name = 'VersionPrefix'; Configured = 'repo-' }
+        @{ Name = 'DatePrereleaseFormat'; Configured = 'yyyyMMdd' }
     ) {
-        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ $Name = '' }
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ $Name = '' } -Configuration @{ $Name = $Configured }
 
-        $result.$Name | Should -BeExactly ''
+        $result.$Name | Should -BeExactly $Configured
     }
 
     It 'preserves an empty repository value when the named input is omitted for <Name>' -ForEach @(
         @{ Name = 'VersionPrefix' }
         @{ Name = 'DatePrereleaseFormat' }
     ) {
-        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ $Name = '' }
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ $Name = '' } -Inputs @{ $Name = '' }
 
         $result.$Name | Should -BeExactly ''
     }
@@ -190,6 +180,21 @@ Describe 'Resolve-ReleaseConfiguration' {
         $result.DefaultBumpSource | Should -BeExactly 'RepositorySetting'
     }
 
+    It 'keeps repository policy when the named bump is <InputState>' -ForEach @(
+        @{ InputState = 'null'; InputValue = $null }
+        @{ InputState = 'empty'; InputValue = '' }
+    ) {
+        $parameters = @{
+            Inputs        = @{ DefaultBump = $InputValue }
+            Configuration = @{ DefaultBump = 'major' }
+        }
+
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration @parameters
+
+        $result.DefaultBump | Should -BeExactly 'major'
+        $result.DefaultBumpSource | Should -BeExactly 'RepositorySetting'
+    }
+
     It 'records the action input as the default source even when it equals the shared default' {
         $result = Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ DefaultBump = 'patch' }
 
@@ -204,17 +209,17 @@ Describe 'Resolve-ReleaseConfiguration' {
         $result.DefaultBumpSource | Should -BeExactly 'ActionInput'
     }
 
-    It 'preserves explicit false and empty text named inputs over repository settings' {
+    It 'preserves explicit false while null and empty inputs keep file text' {
         $parameters = @{
             Configuration = @{ AutoCleanup = $true; VersionPrefix = 'v'; DatePrereleaseFormat = 'yyyyMMdd' }
-            Inputs        = @{ AutoCleanup = $false; VersionPrefix = ''; DatePrereleaseFormat = '' }
+            Inputs        = @{ AutoCleanup = $false; VersionPrefix = $null; DatePrereleaseFormat = '' }
         }
 
         $result = Resolve-ReleaseConfiguration @resolveConfiguration @parameters
 
         $result.AutoCleanup | Should -BeFalse
-        $result.VersionPrefix | Should -BeExactly ''
-        $result.DatePrereleaseFormat | Should -BeExactly ''
+        $result.VersionPrefix | Should -BeExactly 'v'
+        $result.DatePrereleaseFormat | Should -BeExactly 'yyyyMMdd'
     }
 
     It 'rejects an invalid repository value even when the caller supplies a valid override' {
@@ -228,19 +233,23 @@ Describe 'Resolve-ReleaseConfiguration' {
     }
 
     It 'rejects named input settings [<Name>]' -ForEach @(
-        @{ Name = 'DefaultBump'; Value = ''; Message = '*DefaultBump*' }
-        @{ Name = 'DefaultBump'; Value = $null; Message = '*DefaultBump*' }
+        @{ Name = 'DefaultBump'; Value = ' '; Message = '*DefaultBump*' }
         @{ Name = 'DefaultBump'; Value = 'date'; Message = '*DefaultBump*' }
+        @{ Name = 'DefaultBump'; Value = 'inherit'; Message = '*DefaultBump*' }
         @{ Name = 'AutoCleanup'; Value = 'invalid'; Message = '*AutoCleanup*true or false*' }
-        @{ Name = 'VersionPrefix'; Value = $null; Message = '*VersionPrefix*string*' }
+        @{ Name = 'AutoCleanup'; Value = ' '; Message = '*AutoCleanup*true or false*' }
+        @{ Name = 'AutoCleanup'; Value = 'inherit'; Message = '*AutoCleanup*true or false*' }
+        @{ Name = 'AutoCleanup'; Value = 0; Message = '*AutoCleanup*true or false*' }
         @{ Name = 'AutoPatching'; Value = $true; Message = '*AutoPatching*removed*' }
+        @{ Name = 'AutoPatching'; Value = $null; Message = '*AutoPatching*removed*' }
         @{ Name = 'DefaultBunp'; Value = 'minor'; Message = '*Unsupported release setting*' }
+        @{ Name = 'DefaultBunp'; Value = ''; Message = '*Unsupported release setting*' }
     ) {
         { Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ $Name = $Value } } |
             Should -Throw $Message
     }
 
-    It 'does not accept the input inheritance marker as a repository bump value' {
+    It 'rejects literal inherit as an invalid repository bump even with a valid input' {
         $parameters = @{
             Configuration = @{ DefaultBump = 'inherit' }
             Inputs        = @{ DefaultBump = 'minor' }
@@ -248,6 +257,24 @@ Describe 'Resolve-ReleaseConfiguration' {
 
         { Resolve-ReleaseConfiguration @resolveConfiguration @parameters } |
             Should -Throw '*Invalid DefaultBump*'
+    }
+
+    It 'rejects an <SchemaCase> bundled standards mapping before applying valid overrides' -ForEach @(
+        @{ SchemaCase = 'unknown setting in the'; Message = '*Unsupported release setting*DefaultBunp*' }
+        @{ SchemaCase = 'incomplete'; Message = '*standard defaults*missing*WhatIf*' }
+    ) {
+        $defaults = @{}
+        foreach ($entry in $resolveConfiguration.Defaults.GetEnumerator()) {
+            $defaults[$entry.Key] = $entry.Value
+        }
+        if ($SchemaCase -eq 'incomplete') {
+            $defaults.Remove('WhatIf')
+        } else {
+            $defaults.DefaultBunp = 'minor'
+        }
+
+        { Resolve-ReleaseConfiguration -Defaults $defaults -Inputs @{ DefaultBump = 'patch'; WhatIf = $true } } |
+            Should -Throw $Message
     }
 
     It 'rejects null and non-string text settings instead of coercing them' -ForEach @(
