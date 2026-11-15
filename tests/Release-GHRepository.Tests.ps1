@@ -219,17 +219,15 @@ WhatIf: false
         Should -Invoke git -Times 0 -Exactly
     }
 
-    It 'retains scope precedence when the new default file is selected without injection' {
+    It 'applies named inputs over the conventional file before an owned bump' {
         Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
-        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'minor'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup = 'false'
         @'
 DefaultBump: major
-WhatIf: false
-'@ | Set-Content -LiteralPath '.github\release.settings.yml'
-        $env:PSMODULE_AUTO_RELEASE_INPUT_CallerOverrides = @'
-DefaultBump: minor
+AutoCleanup: true
 WhatIf: true
-'@
+'@ | Set-Content -LiteralPath '.github\release.settings.yml'
         $githubEvent.pull_request.labels = @(@{ name = 'release:patch' })
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 
@@ -237,7 +235,7 @@ WhatIf: true
 
         $output | Should -Match 'Reading from configuration file .*release\.settings\.yml'
         $output | Should -Match 'Default bump:\s+\[minor\]'
-        $output | Should -Match 'Default bump source:\s+\[CallerOverride\]'
+        $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
         $output | Should -Match 'Bump source:\s+\[release:patch\]'
         $output | Should -Match 'gh release create v2\.0\.4 '
         Should -Invoke gh -Times 2 -Exactly
