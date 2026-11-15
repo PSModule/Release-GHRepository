@@ -57,5 +57,12 @@ jobs:
         uses: ./
         with:
           WhatIf: true
-          CallerOverrides: |
-            WhatIf: true
+
+      - name: Action-Test - Named overrides
+        uses: ./
+        with:
+          DefaultBump: minor
+          AutoCleanup: false
+          DatePrereleaseFormat: ''
+          VersionPrefix: ''
+          WhatIf: true

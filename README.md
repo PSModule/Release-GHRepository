@@ -83,11 +83,12 @@ The `pull_request_target` workflow checks out the trusted base branch. Do not ch
 
 ## Inputs
 
-| Name | Description | Default | Required |
+Release-setting inputs default to `inherit`. Omit an input, or set it to exactly `inherit`, to retain the repository value or the shared default below. Any other supplied value overrides the repository setting, even when it equals the shared default.
+
+| Name | Description | Effective default | Required |
 | --- | --- | --- | --- |
 | `AutoCleanup` | Delete prereleases after the pull request closes. | `true` | false |
-| `CallerOverrides` | Supply a YAML or JSON mapping of explicit invocation overrides. These override repository settings. | `{}` | false |
-| `ConfigurationFile` | Read repository settings from this file. File values override scalar action inputs, but not `CallerOverrides`. | `.github\release.settings.yml` | false |
+| `ConfigurationFile` | Read repository settings from this file. Explicit named release-setting inputs override file values. | `.github\release.settings.yml` | false |
 | `DefaultBump` | Select the bump when no explicit bump or skip label exists. Accepts exactly `patch`, `minor`, or `major` with case-sensitive matching. | `patch` | false |
 | `CreateMajorTag` | Create or update the floating major tag after a stable release. | `true` | false |
 | `CreateMinorTag` | Create or update the floating minor tag after a stable release. | `true` | false |
@@ -112,11 +113,13 @@ The optional repository settings file is `.github\release.settings.yml`. When it
 
 The removed conventional `.github\auto-release.yml` path has no reader fallback or alias, even when selected explicitly. Its presence alongside the default settings path fails before GitHub operations instead of silently changing the release policy. An existing explicitly selected custom file is read as directed; a missing selected file cannot silently discard legacy conventional settings. The release record contains the exact filename/reader adoption steps.
 
-Settings resolve in this order: defaults declared in `action.yml`, scalar action inputs, repository settings, then explicit `CallerOverrides`. Scalar inputs retain the existing file-over-input behavior because GitHub injects their defaults even when callers omit them. Use `CallerOverrides` for an invocation-specific override; its omitted `{}` mapping inherits repository settings without masking them.
+Settings resolve in this order: shared defaults declared in `action.yml`, repository settings, then explicit named action inputs. An owned bump label overrides the valid effective `DefaultBump`. The action reports whether the bump comes from an owned label, a named action input, a repository setting, or the shared default.
 
-An explicit `false` or empty string is an override, not an omitted setting. Booleans accept YAML `true` and `false` or case-insensitive strings containing exactly `true` or `false`. Text settings require strings; only `VersionPrefix` and `DatePrereleaseFormat` accept empty strings. Every supplied layer is validated before merging, so a valid override cannot hide an invalid lower-priority value.
+The runner applies the `inherit` default only when a caller omits the input. An explicit `false` or empty string is not omission. Booleans accept YAML `true` and `false` or case-insensitive strings containing exactly `true` or `false`. Text settings require strings; only `VersionPrefix` and `DatePrereleaseFormat` accept empty strings. Use `VersionPrefix: ''` to clear a repository prefix, or `DatePrereleaseFormat: ''` to disable its date suffix for that invocation.
 
-The file and `CallerOverrides` must contain mappings. They accept the release settings from `AutoCleanup` through `WhatIf` in the input table, excluding `CallerOverrides` and `ConfigurationFile` themselves. The dependency/runtime inputs (`Debug`, `Verbose`, `Version`, `Prerelease`, and `WorkingDirectory`) are supplied separately by the caller. Unknown keys, removed keys, null values, and invalid values fail before label provisioning.
+The `inherit` marker applies only to release-setting action inputs. It does not relax repository settings validation: `DefaultBump: inherit` in the file is invalid, and a text value of `inherit` there remains literal text. Every supplied layer is validated, so a valid named input or owned label cannot hide an invalid repository value.
+
+The file must contain a mapping of the release settings from `AutoCleanup` through `WhatIf` in the input table, excluding `ConfigurationFile` itself. The dependency/runtime inputs (`Debug`, `Verbose`, `Version`, `Prerelease`, and `WorkingDirectory`) are supplied separately by the caller. They do not use the release-setting inheritance marker. Unknown keys, removed keys, null values, and invalid values fail before label provisioning.
 
 ```yaml
 # .github\release.settings.yml
@@ -137,13 +140,18 @@ For an invocation-specific minor bump, even when the repository configures major
 
 ```yaml
 with:
-  CallerOverrides: |
-    DefaultBump: minor
-    AutoCleanup: false
-    VersionPrefix: ''
+  DefaultBump: minor
+  AutoCleanup: false
+  VersionPrefix: ''
 ```
 
-JSON mappings are supported too, such as `CallerOverrides: '{"DefaultBump":"minor"}'`. An explicit owned bump label still overrides the valid effective `DefaultBump`. The action reports whether the bump came from an owned label, explicit caller override, repository setting, scalar base input, or shared default.
+To inherit the repository bump and force a read-only invocation:
+
+```yaml
+with:
+  DefaultBump: inherit
+  WhatIf: true
+```
 
 `DatePrereleaseFormat` formats only the existing prerelease suffix. `DefaultBump` does not support date versioning or a disabled automatic bump. Use `release:skip` when validation must succeed without publication.
 

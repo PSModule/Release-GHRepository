@@ -61,16 +61,17 @@ Describe 'Resolve-ReleaseConfiguration' {
         $decision.DefaultBumpApplied | Should -BeTrue
     }
 
-    It 'lets file settings override caller inputs without mutating either mapping' {
+    It 'lets named inputs override repository settings without mutating either mapping' {
         $inputs = @{ DefaultBump = 'patch'; AutoCleanup = 'true'; VersionPrefix = 'v' }
         $configuration = [ordered]@{ DefaultBump = 'major'; AutoCleanup = $false; VersionPrefix = '' }
 
         $result = Resolve-ReleaseConfiguration @resolveConfiguration -Inputs $inputs -Configuration $configuration
         $decision = Resolve-ReleaseDecision -Labels @() -DefaultBump $result.DefaultBump
 
-        $decision.Bump | Should -BeExactly 'Major'
-        $result.AutoCleanup | Should -BeFalse
-        $result.VersionPrefix | Should -BeExactly ''
+        $decision.Bump | Should -BeExactly 'Patch'
+        $result.DefaultBumpSource | Should -BeExactly 'ActionInput'
+        $result.AutoCleanup | Should -BeTrue
+        $result.VersionPrefix | Should -BeExactly 'v'
         $inputs.DefaultBump | Should -BeExactly 'patch'
         $inputs.AutoCleanup | Should -BeExactly 'true'
         $configuration.DefaultBump | Should -BeExactly 'major'
@@ -95,11 +96,11 @@ Describe 'Resolve-ReleaseConfiguration' {
         $result.$Name | Should -BeExactly ''
     }
 
-    It 'lets an empty file value override a nonempty input for <Name>' -ForEach @(
-        @{ Name = 'VersionPrefix'; InputValue = 'v' }
-        @{ Name = 'DatePrereleaseFormat'; InputValue = 'yyyyMMddHHmm' }
+    It 'preserves an empty repository value when the named input is omitted for <Name>' -ForEach @(
+        @{ Name = 'VersionPrefix' }
+        @{ Name = 'DatePrereleaseFormat' }
     ) {
-        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ $Name = $InputValue } -Configuration @{ $Name = '' }
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ $Name = '' }
 
         $result.$Name | Should -BeExactly ''
     }
@@ -151,12 +152,12 @@ Describe 'Resolve-ReleaseConfiguration' {
             Should -Throw '*DefaultBump*'
     }
 
-    It 'rejects an invalid input that is not overridden by a valid file setting' {
+    It 'rejects an invalid named input' {
         { Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ DefaultBump = 'invalid' } } |
             Should -Throw '*DefaultBump*'
     }
 
-    It 'rejects an invalid input even when a valid file value overrides it' {
+    It 'rejects an invalid named input even when the repository value is valid' {
         $parameters = @{
             Inputs        = @{ DefaultBump = 'invalid' }
             Configuration = @{ DefaultBump = 'minor' }
@@ -165,24 +166,22 @@ Describe 'Resolve-ReleaseConfiguration' {
             Should -Throw '*DefaultBump*'
     }
 
-    It 'lets explicit caller overrides take precedence over repository settings' {
+    It 'lets a named DefaultBump override repository settings' {
         $parameters = @{
-            Inputs          = @{ DefaultBump = 'patch' }
-            Configuration   = @{ DefaultBump = 'major' }
-            CallerOverrides = @{ DefaultBump = 'minor' }
+            Inputs        = @{ DefaultBump = 'minor' }
+            Configuration = @{ DefaultBump = 'major' }
         }
 
         $result = Resolve-ReleaseConfiguration @resolveConfiguration @parameters
 
         $result.DefaultBump | Should -BeExactly 'minor'
-        $result.DefaultBumpSource | Should -BeExactly 'CallerOverride'
+        $result.DefaultBumpSource | Should -BeExactly 'ActionInput'
     }
 
-    It 'does not let injected scalar defaults mask repository settings when overrides are empty' {
+    It 'inherits repository settings when no named input is supplied' {
         $parameters = @{
-            Inputs          = @{ DefaultBump = 'patch' }
-            Configuration   = @{ DefaultBump = 'major' }
-            CallerOverrides = @{}
+            Inputs        = @{}
+            Configuration = @{ DefaultBump = 'major' }
         }
 
         $result = Resolve-ReleaseConfiguration @resolveConfiguration @parameters
@@ -191,17 +190,24 @@ Describe 'Resolve-ReleaseConfiguration' {
         $result.DefaultBumpSource | Should -BeExactly 'RepositorySetting'
     }
 
-    It 'records a nondefault scalar input as a base input rather than an explicit caller override' {
+    It 'records the action input as the default source even when it equals the shared default' {
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ DefaultBump = 'patch' }
+
+        $result.DefaultBump | Should -BeExactly 'patch'
+        $result.DefaultBumpSource | Should -BeExactly 'ActionInput'
+    }
+
+    It 'records a nondefault named input as the decision source' {
         $result = Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ DefaultBump = 'minor' }
 
         $result.DefaultBump | Should -BeExactly 'minor'
         $result.DefaultBumpSource | Should -BeExactly 'ActionInput'
     }
 
-    It 'preserves explicit false and empty text caller overrides' {
+    It 'preserves explicit false and empty text named inputs over repository settings' {
         $parameters = @{
-            Configuration   = @{ AutoCleanup = $true; VersionPrefix = 'v'; DatePrereleaseFormat = 'yyyyMMdd' }
-            CallerOverrides = @{ AutoCleanup = $false; VersionPrefix = ''; DatePrereleaseFormat = '' }
+            Configuration = @{ AutoCleanup = $true; VersionPrefix = 'v'; DatePrereleaseFormat = 'yyyyMMdd' }
+            Inputs        = @{ AutoCleanup = $false; VersionPrefix = ''; DatePrereleaseFormat = '' }
         }
 
         $result = Resolve-ReleaseConfiguration @resolveConfiguration @parameters
@@ -213,15 +219,15 @@ Describe 'Resolve-ReleaseConfiguration' {
 
     It 'rejects an invalid repository value even when the caller supplies a valid override' {
         $parameters = @{
-            Configuration   = @{ DefaultBump = 'invalid' }
-            CallerOverrides = @{ DefaultBump = 'patch' }
+            Configuration = @{ DefaultBump = 'invalid' }
+            Inputs        = @{ DefaultBump = 'patch' }
         }
 
         { Resolve-ReleaseConfiguration @resolveConfiguration @parameters } |
             Should -Throw '*DefaultBump*'
     }
 
-    It 'rejects caller override settings [<Name>]' -ForEach @(
+    It 'rejects named input settings [<Name>]' -ForEach @(
         @{ Name = 'DefaultBump'; Value = ''; Message = '*DefaultBump*' }
         @{ Name = 'DefaultBump'; Value = $null; Message = '*DefaultBump*' }
         @{ Name = 'DefaultBump'; Value = 'date'; Message = '*DefaultBump*' }
@@ -230,17 +236,18 @@ Describe 'Resolve-ReleaseConfiguration' {
         @{ Name = 'AutoPatching'; Value = $true; Message = '*AutoPatching*removed*' }
         @{ Name = 'DefaultBunp'; Value = 'minor'; Message = '*Unsupported release setting*' }
     ) {
-        { Resolve-ReleaseConfiguration @resolveConfiguration -CallerOverrides @{ $Name = $Value } } |
+        { Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ $Name = $Value } } |
             Should -Throw $Message
     }
 
-    It 'rejects a supplied caller override root that is not a mapping' -ForEach @(
-        @{ Overrides = $null }
-        @{ Overrides = '' }
-        @{ Overrides = @('patch', 'minor') }
-    ) {
-        { Resolve-ReleaseConfiguration @resolveConfiguration -CallerOverrides $Overrides } |
-            Should -Throw '*CallerOverrides must be a mapping*'
+    It 'does not accept the input inheritance marker as a repository bump value' {
+        $parameters = @{
+            Configuration = @{ DefaultBump = 'inherit' }
+            Inputs        = @{ DefaultBump = 'minor' }
+        }
+
+        { Resolve-ReleaseConfiguration @resolveConfiguration @parameters } |
+            Should -Throw '*Invalid DefaultBump*'
     }
 
     It 'rejects null and non-string text settings instead of coercing them' -ForEach @(
