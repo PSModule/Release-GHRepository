@@ -83,7 +83,7 @@ The `pull_request_target` workflow checks out the trusted base branch. Do not ch
 
 ## Inputs
 
-Release-setting inputs default to `inherit`. Omit an input, or set it to exactly `inherit`, to retain the repository value or the shared default below. Any other supplied value overrides the repository setting, even when it equals the shared default.
+Standard release values come from the action-owned [settings file](src/release.settings.yml). Repository settings override those standards. A supplied nonempty action input overrides repository policy, even when its value equals a standard. Omitted, null, and empty-string release-setting inputs do not override file values; explicit `false` remains an override.
 
 | Name | Description | Effective default | Required |
 | --- | --- | --- | --- |
@@ -109,17 +109,19 @@ Use the `release:prerelease` label to select repository prerelease behavior. The
 
 ### Settings file path
 
-The default settings file path is `.github\release.settings.yml`. Use `SettingsFilePath` to select a custom file. Relative paths resolve from `WorkingDirectory`. Omit this input to use the default path; an empty or whitespace-only path is invalid. If the file is absent, shared defaults and explicit named inputs remain effective.
+The default repository settings file path is `.github\release.settings.yml`. Use `SettingsFilePath` to select a custom file. Relative paths resolve from `WorkingDirectory`. Omit this input to use the default path; an empty or whitespace-only path is invalid. If the selected repository file is absent, bundled standards and nonempty named inputs remain effective.
 
 The removed conventional `.github\auto-release.yml` path has no reader fallback or alias, even when selected explicitly. Its presence alongside the default settings path fails before GitHub operations instead of silently changing the release policy. An existing explicitly selected custom file is read as directed; a missing selected file cannot silently discard legacy conventional settings. The release record contains the exact filename/reader adoption steps.
 
-Settings resolve in this order: shared defaults declared in `action.yml`, repository settings, then explicit named action inputs. An owned bump label overrides the valid effective `DefaultBump`. The action reports whether the bump comes from an owned label, a named action input, a repository setting, or the shared default.
+Settings resolve in this order: bundled `src\release.settings.yml`, the selected repository settings file, then nonempty named action inputs. The bundled file is required and is read relative to the action script, not the caller's working directory. `SettingsFilePath` selects only repository policy; it does not replace the bundled standards. An owned bump label overrides the valid effective `DefaultBump`. The action reports whether the bump comes from an owned label, a named action input, a repository setting, or the bundled standard.
 
-The runner applies the `inherit` default only when a caller omits the input. An explicit `false` or empty string is not omission. Booleans accept YAML `true` and `false` or case-insensitive strings containing exactly `true` or `false`. Text settings require strings; only `VersionPrefix` and `DatePrereleaseFormat` accept empty strings. Use `VersionPrefix: ''` to clear a repository prefix, or `DatePrereleaseFormat: ''` to disable its date suffix for that invocation.
+The runner represents both omitted and explicitly empty composite inputs as empty text. Both mean no override for release settings. Empty inputs cannot clear text configured in a file. Set `VersionPrefix: ''` or `DatePrereleaseFormat: ''` in a settings file when an empty value is required; both remain supported file values.
 
-The `inherit` marker applies only to release-setting action inputs. It does not relax repository settings validation: `DefaultBump: inherit` in the file is invalid, and a text value of `inherit` there remains literal text. Every supplied layer is validated, so a valid named input or owned label cannot hide an invalid repository value.
+There is no reserved omission value. Nonempty inputs go through normal validation, including whitespace. Booleans accept YAML `true` and `false` or case-insensitive strings containing exactly `true` or `false`; whitespace-only booleans and bumps are invalid. Text values remain literal strings. Every file layer is validated, so valid named inputs or owned labels cannot hide invalid standards or repository settings.
 
-The file must contain a mapping of the release settings from `AutoCleanup` through `WhatIf` in the input table, excluding `SettingsFilePath` itself. The dependency/runtime inputs (`Debug`, `Verbose`, `Version`, `Prerelease`, and `WorkingDirectory`) are supplied separately by the caller. They do not use the release-setting inheritance marker. Unknown keys, removed keys, null values, and invalid values fail before label provisioning.
+The repository file must contain a mapping of the release settings from `AutoCleanup` through `WhatIf` in the input table, excluding `SettingsFilePath` itself. It can supply only the settings that differ from the standards. Unknown keys, removed keys, null values, and invalid file values fail before label provisioning.
+
+The path and dependency/runtime inputs (`SettingsFilePath`, `Debug`, `Verbose`, `Version`, `Prerelease`, and `WorkingDirectory`) remain separate. Their defaults are declared in action metadata, not in the release-policy settings file.
 
 ```yaml
 # .github\release.settings.yml
@@ -142,7 +144,6 @@ For an invocation-specific minor bump, even when the repository configures major
 with:
   DefaultBump: minor
   AutoCleanup: false
-  VersionPrefix: ''
 ```
 
 To select a custom settings file, inherit its bump, and force a read-only invocation:
@@ -150,7 +151,6 @@ To select a custom settings file, inherit its bump, and force a read-only invoca
 ```yaml
 with:
   SettingsFilePath: .github\repository-release.settings.yml
-  DefaultBump: inherit
   WhatIf: true
 ```
 

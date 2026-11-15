@@ -39,16 +39,15 @@ LogGroup 'Loading libraries' {
 LogGroup 'Set configuration' {
     $actionDefinitionPath = Join-Path -Path $PSScriptRoot -ChildPath '..\action.yml'
     $actionDefinition = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $actionDefinitionPath -Raw)
-    $actionDefaults = ConvertFrom-Yaml -Yaml $actionDefinition.runs.steps[0].env.PSMODULE_AUTO_RELEASE_DEFAULT_SETTINGS
+    $standardSettingsPath = Join-Path -Path $PSScriptRoot -ChildPath 'release.settings.yml'
+    Write-Output "Reading bundled release defaults [$standardSettingsPath]"
+    $actionDefaults = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $standardSettingsPath -Raw) -Ordered
     if ($actionDefaults -isnot [System.Collections.IDictionary]) {
-        throw 'The action release defaults must be a mapping of supported settings.'
+        throw "Bundled release defaults [$standardSettingsPath] must be a mapping of supported settings."
     }
     $actionInputs = @{}
     foreach ($name in $actionDefaults.Keys) {
-        $inputValue = [Environment]::GetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$name")
-        if ($null -ne $inputValue -and $inputValue -cne $actionDefinition.inputs[$name].default) {
-            $actionInputs[$name] = $inputValue
-        }
+        $actionInputs[$name] = [Environment]::GetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$name")
     }
 
     $settingsFilePath = [Environment]::GetEnvironmentVariable('PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath')

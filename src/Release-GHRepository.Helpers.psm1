@@ -83,13 +83,13 @@ function ConvertTo-ReleaseSettingValue {
 function Resolve-ReleaseConfiguration {
     <#
         .SYNOPSIS
-        Resolve validated release settings from interface defaults and overrides.
+        Resolve validated release settings from file-backed standards and inputs.
 
         .DESCRIPTION
-        Apply repository settings over shared defaults declared in action.yml,
-        then explicit named action inputs. Validate every supplied layer so
-        invalid values cannot be masked. Preserve false and empty text values
-        and record the effective default-bump source.
+        Apply repository settings over bundled file-backed standards, then
+        nonempty named action inputs. Validate every supplied layer so invalid
+        values cannot be masked. Preserve explicit false and file empty text
+        values, and record the effective default-bump source.
 
         .EXAMPLE
         $parameters = @{
@@ -114,11 +114,11 @@ function Resolve-ReleaseConfiguration {
     [OutputType([PSCustomObject])]
     [CmdletBinding()]
     param(
-        # The controller input defaults from action.yml.
+        # Standard settings parsed from the action-owned settings file.
         [Parameter(Mandatory)]
         [System.Collections.IDictionary] $Defaults,
 
-        # The action inputs explicitly supplied by the runtime.
+        # Named runtime inputs; null and empty strings do not override file policy.
         [Parameter()]
         [AllowNull()]
         [System.Collections.IDictionary] $Inputs,
@@ -131,6 +131,24 @@ function Resolve-ReleaseConfiguration {
 
     if ($null -ne $Configuration -and $Configuration -isnot [System.Collections.IDictionary]) {
         throw 'Release configuration must be a mapping of supported settings.'
+    }
+    $settingNames = @(
+        'AutoCleanup'
+        'DefaultBump'
+        'CreateMajorTag'
+        'CreateMinorTag'
+        'DatePrereleaseFormat'
+        'IncrementalPrerelease'
+        'UsePRTitleAsReleaseName'
+        'UsePRBodyAsReleaseNotes'
+        'UsePRTitleAsNotesHeading'
+        'VersionPrefix'
+        'WhatIf'
+    )
+    foreach ($name in $settingNames) {
+        if ($Defaults.Keys -notcontains $name) {
+            throw "Release standard defaults are missing required setting [$name]."
+        }
     }
     $retiredSettings = @('AutoPatching', 'IgnoreLabels', 'MajorLabels', 'MinorLabels', 'PatchLabels')
     $layers = @(
@@ -148,10 +166,15 @@ function Resolve-ReleaseConfiguration {
             if ($retiredSettings -contains $name) {
                 throw "Release setting [$name] was removed. Use DefaultBump and the owned release: labels."
             }
-            if ($Defaults.Keys -notcontains $name) {
-                throw "Unsupported release setting [$name]. Use the settings documented in action.yml."
+            if ($settingNames -notcontains $name) {
+                throw "Unsupported release setting [$name]. Use the documented release settings."
             }
-            $settings[$name] = ConvertTo-ReleaseSettingValue -Name $name -Value $layer.Values[$name]
+            $value = $layer.Values[$name]
+            $isEmpty = $null -eq $value -or ($value -is [string] -and $value.Length -eq 0)
+            if ($layer.Source -eq 'ActionInput' -and $isEmpty) {
+                continue
+            }
+            $settings[$name] = ConvertTo-ReleaseSettingValue -Name $name -Value $value
             if ($name -eq 'DefaultBump') {
                 $defaultBumpSource = $layer.Source
             }

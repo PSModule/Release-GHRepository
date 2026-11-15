@@ -1,0 +1,11 @@
+AutoCleanup: true
+DefaultBump: patch
+CreateMajorTag: true
+CreateMinorTag: true
+DatePrereleaseFormat: ''
+IncrementalPrerelease: true
+UsePRTitleAsReleaseName: false
+UsePRBodyAsReleaseNotes: true
+UsePRTitleAsNotesHeading: true
+VersionPrefix: v
+WhatIf: false
