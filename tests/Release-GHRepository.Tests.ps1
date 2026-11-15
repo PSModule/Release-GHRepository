@@ -39,6 +39,7 @@ Describe 'Release-GHRepository caller compatibility' {
             'GITHUB_REPOSITORY'
             'GITHUB_EVENT_PATH'
             'PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile'
+            'PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath'
             'PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup'
             'PSMODULE_AUTO_RELEASE_INPUT_DefaultBump'
             'PSMODULE_AUTO_RELEASE_INPUT_CreateMajorTag'
@@ -61,8 +62,8 @@ Describe 'Release-GHRepository caller compatibility' {
 
         $env:GITHUB_REPOSITORY = 'example/repository'
         $env:GITHUB_EVENT_PATH = Join-Path -Path $TestDrive -ChildPath 'event.json'
-        $settingsFileName = 'settings-{0}.yml' -f [guid]::NewGuid().ToString('N')
-        $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile = Join-Path -Path $TestDrive -ChildPath $settingsFileName
+        $settingsFileName = 'settings [custom path] {0}.yml' -f [guid]::NewGuid().ToString('N')
+        $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath = Join-Path -Path $TestDrive -ChildPath $settingsFileName
         $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'true'
         $githubEvent = @{
             action       = 'opened'
@@ -121,8 +122,8 @@ Describe 'Release-GHRepository caller compatibility' {
             Should -BeExactly '${{ inputs.SettingsFilePath }}'
     }
 
-    It 'reads the declared default without an injected ConfigurationFile input' {
-        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+    It 'reads the declared default without an injected SettingsFilePath input' {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         @'
 DefaultBump: minor
 WhatIf: true
@@ -130,7 +131,7 @@ WhatIf: true
 
         $output = (& $mainPath) -join "`n"
 
-        $output | Should -Match 'Reading from configuration file .*release\.settings\.yml'
+        $output | Should -Match 'Reading settings file .*release\.settings\.yml'
         $output | Should -Match 'Default bump:\s+\[minor\]'
         $output | Should -Match 'Default bump source:\s+\[RepositorySetting\]'
         $output | Should -Match 'gh release create v2\.1\.0 '
@@ -139,7 +140,7 @@ WhatIf: true
     }
 
     It 'inherits conventional-file settings when named inputs select inherit' {
-        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'inherit'
         $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup = 'inherit'
         $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix = 'inherit'
@@ -154,7 +155,7 @@ WhatIf: true
 
         $output = (& $mainPath) -join "`n"
 
-        $output | Should -Match 'Reading from configuration file .*release\.settings\.yml'
+        $output | Should -Match 'Reading settings file .*release\.settings\.yml'
         $output | Should -Match 'Default bump:\s+\[minor\]'
         $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
         $output | Should -Match 'Version prefix:\s+\[\]'
@@ -165,11 +166,11 @@ WhatIf: true
     }
 
     It 'inherits valid defaults when the conventional settings file is intentionally absent' {
-        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
 
         $output = (& $mainPath) -join "`n"
 
-        $output | Should -Match 'Configuration file not found at .*release\.settings\.yml'
+        $output | Should -Match 'Settings file not found at .*release\.settings\.yml'
         $output | Should -Match 'Default bump:\s+\[patch\]'
         $output | Should -Match 'Default bump source:\s+\[SharedDefault\]'
         $output | Should -Match 'gh release create v2\.0\.4 '
@@ -178,20 +179,20 @@ WhatIf: true
     }
 
     It 'rejects legacy-only conventional settings instead of silently applying another policy' {
-        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         @'
 DefaultBump: major
 WhatIf: false
 '@ | Set-Content -LiteralPath '.github\auto-release.yml'
 
         { & $mainPath } |
-            Should -Throw '*auto-release.yml*no longer supported*release.settings.yml*ConfigurationFile*'
+            Should -Throw '*auto-release.yml*no longer supported*release.settings.yml*SettingsFilePath*'
         Should -Invoke gh -Times 0 -Exactly
         Should -Invoke git -Times 0 -Exactly
     }
 
     It 'rejects a legacy conventional file even when the new default file also exists' {
-        $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile = '.github\release.settings.yml'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath = '.github\release.settings.yml'
         'DefaultBump: major' | Set-Content -LiteralPath '.github\auto-release.yml'
         'DefaultBump: minor' | Set-Content -LiteralPath '.github\release.settings.yml'
 
@@ -205,9 +206,9 @@ WhatIf: false
         @{ PathKind = 'normalized relative'; PathValue = '.github\..\.github\auto-release.yml' }
         @{ PathKind = 'absolute'; PathValue = $null }
     ) {
-        $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile = $PathValue
+        $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath = $PathValue
         if ($PathKind -eq 'absolute') {
-            $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile = Join-Path -Path $callerDirectory -ChildPath '.github\auto-release.yml'
+            $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath = Join-Path -Path $callerDirectory -ChildPath '.github\auto-release.yml'
         }
         @'
 DefaultBump: major
@@ -222,16 +223,16 @@ WhatIf: false
     It 'preserves an intentional custom settings path without adding discovery or fallback' {
         'DefaultBump: major' | Set-Content -LiteralPath '.github\auto-release.yml'
         'DefaultBump: major' | Set-Content -LiteralPath '.github\release.settings.yml'
-        $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile = Join-Path -Path $callerDirectory -ChildPath 'custom.settings.yml'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath = Join-Path -Path $callerDirectory -ChildPath 'custom.settings.yml'
         @'
 DefaultBump: minor
 WhatIf: false
-'@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+'@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'true'
 
         $output = (& $mainPath) -join "`n"
 
-        $output | Should -Match 'Reading from configuration file .*custom\.settings\.yml'
+        $output | Should -Match 'Reading settings file .*custom\.settings\.yml'
         $output | Should -Match 'Default bump:\s+\[minor\]'
         $output | Should -Match 'gh release create v2\.1\.0 '
         Should -Invoke gh -Times 2 -Exactly
@@ -239,16 +240,16 @@ WhatIf: false
     }
 
     It 'does not ignore legacy settings when an explicitly selected custom file is missing' {
-        $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile = 'missing.settings.yml'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath = 'missing.settings.yml'
         'DefaultBump: major' | Set-Content -LiteralPath '.github\auto-release.yml'
 
-        { & $mainPath } | Should -Throw '*auto-release.yml*no longer supported*release.settings.yml*ConfigurationFile*'
+        { & $mainPath } | Should -Throw '*auto-release.yml*no longer supported*release.settings.yml*SettingsFilePath*'
         Should -Invoke gh -Times 0 -Exactly
         Should -Invoke git -Times 0 -Exactly
     }
 
     It 'applies named inputs over the conventional file before an owned bump' {
-        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'minor'
         $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup = 'false'
         @'
@@ -261,7 +262,7 @@ WhatIf: true
 
         $output = (& $mainPath) -join "`n"
 
-        $output | Should -Match 'Reading from configuration file .*release\.settings\.yml'
+        $output | Should -Match 'Reading settings file .*release\.settings\.yml'
         $output | Should -Match 'Default bump:\s+\[minor\]'
         $output | Should -Match 'Default bump source:\s+\[ActionInput\]'
         $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
@@ -272,7 +273,7 @@ WhatIf: true
     }
 
     It 'clears conventional-file text settings through explicit empty named inputs' {
-        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix = ''
         $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = ''
         @'
@@ -284,7 +285,7 @@ WhatIf: true
 
         $output = (& $mainPath) -join "`n"
 
-        $output | Should -Match 'Reading from configuration file .*release\.settings\.yml'
+        $output | Should -Match 'Reading settings file .*release\.settings\.yml'
         $output | Should -Match 'Version prefix:\s+\[\]'
         $output | Should -Match 'Date-based prerelease format:\s+\[\]'
         $output | Should -Match 'gh release create 2\.1\.0 '
@@ -298,9 +299,9 @@ WhatIf: true
         @{ Yaml = 'WhatIf: invalid'; Message = '*WhatIf*true or false*' }
         @{ Yaml = 'AutoPatching: false'; Message = '*AutoPatching*removed*' }
         @{ Yaml = '- patch'; Message = '*configuration must be a mapping*' }
-        @{ Yaml = ''; Message = '*configuration*must be a mapping*' }
+        @{ Yaml = ''; Message = '*settings file*must be a mapping*' }
     ) {
-        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $Yaml | Set-Content -LiteralPath '.github\release.settings.yml'
         $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
 
@@ -318,6 +319,57 @@ WhatIf: true
         $output | Should -Match 'gh release create v2\.0\.4 '
         $output.Contains($authoredBody) | Should -BeTrue
         Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'uses the declared SettingsFilePath default when the file is <FileState>' -ForEach @(
+        @{
+            FileState       = 'present'
+            FilePresent     = $true
+            ExpectedBump    = 'minor'
+            ExpectedSource  = 'RepositorySetting'
+            ExpectedVersion = 'v2.1.0'
+        }
+        @{
+            FileState       = 'absent'
+            FilePresent     = $false
+            ExpectedBump    = 'patch'
+            ExpectedSource  = 'SharedDefault'
+            ExpectedVersion = 'v2.0.4'
+        }
+    ) {
+        $actionDefinition.inputs.ContainsKey('ConfigurationFile') | Should -BeFalse
+        $defaultSettingsPath = $actionDefinition.inputs.SettingsFilePath.default
+        $defaultSettingsPath | Should -BeExactly '.github\release.settings.yml'
+        $callerDirectory = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N'))
+        $null = New-Item -Path (Join-Path -Path $callerDirectory -ChildPath '.github') -ItemType Directory
+        if ($FilePresent) {
+            'DefaultBump: minor' | Set-Content -LiteralPath (Join-Path -Path $callerDirectory -ChildPath $defaultSettingsPath)
+        }
+        Remove-Item -LiteralPath 'Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath'
+
+        Push-Location -LiteralPath $callerDirectory
+        try {
+            $output = (& $mainPath) -join "`n"
+        } finally {
+            Pop-Location
+        }
+
+        $output | Should -Match "Default bump:\s+\[$ExpectedBump\]"
+        $output | Should -Match "Default bump source:\s+\[$ExpectedSource\]"
+        $output | Should -Match "gh release create $([regex]::Escape($ExpectedVersion)) "
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'rejects a <PathDescription> SettingsFilePath before contacting GitHub' -ForEach @(
+        @{ PathDescription = 'blank'; PathValue = '' }
+        @{ PathDescription = 'whitespace-only'; PathValue = ' ' }
+    ) {
+        [Environment]::SetEnvironmentVariable('PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath', $PathValue)
+
+        { & $mainPath } | Should -Throw '*SettingsFilePath must be a nonempty path.*'
+        Should -Invoke gh -Times 0 -Exactly
         Should -Invoke git -Times 0 -Exactly
     }
 
@@ -343,7 +395,7 @@ DefaultBump: minor
 AutoCleanup: false
 DatePrereleaseFormat: ''
 VersionPrefix: ''
-'@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+'@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
 
         $output = (& $mainPath) -join "`n"
 
@@ -357,7 +409,7 @@ VersionPrefix: ''
 
     It 'treats inherit as omission instead of masking repository policy' {
         $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'inherit'
-        'DefaultBump: major' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        'DefaultBump: major' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
 
         $output = (& $mainPath) -join "`n"
 
@@ -385,7 +437,7 @@ VersionPrefix: ''
     }
 
     It 'lets an explicit owned major override a file minor default and preserves the complete record' {
-        'DefaultBump: minor' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        'DefaultBump: minor' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $githubEvent.pull_request.labels = @(@{ name = 'release:major' }, @{ name = 'dependencies' })
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 
@@ -416,7 +468,7 @@ VersionPrefix: ''
 
     It 'lets a named DefaultBump override repository policy' {
         $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'minor'
-        'DefaultBump: major' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        'DefaultBump: major' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
 
         $output = (& $mainPath) -join "`n"
 
@@ -432,7 +484,7 @@ VersionPrefix: ''
 DefaultBump: major
 AutoCleanup: true
 VersionPrefix: v
-'@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+'@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
         $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup = 'false'
         $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix = ''
@@ -447,7 +499,7 @@ VersionPrefix: v
     }
 
     It 'does not mask an invalid file value with a valid explicit caller override' {
-        'DefaultBump: invalid' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        'DefaultBump: invalid' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
 
         { & $mainPath } | Should -Throw '*DefaultBump*'
@@ -455,7 +507,7 @@ VersionPrefix: v
     }
 
     It 'keeps validation read-only when explicit WhatIf overrides a false repository setting' {
-        'WhatIf: false' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        'WhatIf: false' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
 
         $output = (& $mainPath) -join "`n"
 
@@ -466,7 +518,7 @@ VersionPrefix: v
     }
 
     It 'preserves an explicit empty date format over a repository format' {
-        'DatePrereleaseFormat: yyyyMMdd' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        'DatePrereleaseFormat: yyyyMMdd' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = ''
         $githubEvent.pull_request.labels = @(@{ name = 'release:prerelease' })
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
@@ -480,7 +532,7 @@ VersionPrefix: v
     }
 
     It 'accepts explicit false for WhatIf as a real override with only simulated label writes' {
-        'WhatIf: true' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        'WhatIf: true' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'false'
         $simulateLabelWrites = $true
         $githubEvent.pull_request.labels = @(@{ name = 'release:skip' })
@@ -603,9 +655,9 @@ VersionPrefix: v
         @{ Yaml = 'AutoPatching: false'; Message = '*AutoPatching*removed*' }
         @{ Yaml = 'DefaultBunp: minor'; Message = '*Unsupported release setting*' }
         @{ Yaml = '- patch'; Message = '*configuration must be a mapping*' }
-        @{ Yaml = ''; Message = '*configuration*must be a mapping*' }
+        @{ Yaml = ''; Message = '*settings file*must be a mapping*' }
     ) {
-        $Yaml | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile
+        $Yaml | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
 
         { & $mainPath } | Should -Throw $Message
         Should -Invoke gh -Times 0 -Exactly

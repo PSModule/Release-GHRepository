@@ -88,7 +88,7 @@ Release-setting inputs default to `inherit`. Omit an input, or set it to exactly
 | Name | Description | Effective default | Required |
 | --- | --- | --- | --- |
 | `AutoCleanup` | Delete prereleases after the pull request closes. | `true` | false |
-| `ConfigurationFile` | Read repository settings from this file. Explicit named release-setting inputs override file values. | `.github\release.settings.yml` | false |
+| `SettingsFilePath` | Read repository settings from this file path. Explicit named release-setting inputs override file values. | `.github\release.settings.yml` | false |
 | `DefaultBump` | Select the bump when no explicit bump or skip label exists. Accepts exactly `patch`, `minor`, or `major` with case-sensitive matching. | `patch` | false |
 | `CreateMajorTag` | Create or update the floating major tag after a stable release. | `true` | false |
 | `CreateMinorTag` | Create or update the floating minor tag after a stable release. | `true` | false |
@@ -107,9 +107,9 @@ Release-setting inputs default to `inherit`. Omit an input, or set it to exactly
 
 Use the `release:prerelease` label to select repository prerelease behavior. The similarly named `Prerelease` action input only controls dependency resolution for the GitHub module used internally.
 
-### Settings file
+### Settings file path
 
-The optional repository settings file is `.github\release.settings.yml`. When it is absent, valid action defaults and caller inputs still apply. `ConfigurationFile` preserves explicit control over a custom settings path; it does not add another conventional filename or search path.
+The default settings file path is `.github\release.settings.yml`. Use `SettingsFilePath` to select a custom file. Relative paths resolve from `WorkingDirectory`. Omit this input to use the default path; an empty or whitespace-only path is invalid. If the file is absent, shared defaults and explicit named inputs remain effective.
 
 The removed conventional `.github\auto-release.yml` path has no reader fallback or alias, even when selected explicitly. Its presence alongside the default settings path fails before GitHub operations instead of silently changing the release policy. An existing explicitly selected custom file is read as directed; a missing selected file cannot silently discard legacy conventional settings. The release record contains the exact filename/reader adoption steps.
 
@@ -119,7 +119,7 @@ The runner applies the `inherit` default only when a caller omits the input. An 
 
 The `inherit` marker applies only to release-setting action inputs. It does not relax repository settings validation: `DefaultBump: inherit` in the file is invalid, and a text value of `inherit` there remains literal text. Every supplied layer is validated, so a valid named input or owned label cannot hide an invalid repository value.
 
-The file must contain a mapping of the release settings from `AutoCleanup` through `WhatIf` in the input table, excluding `ConfigurationFile` itself. The dependency/runtime inputs (`Debug`, `Verbose`, `Version`, `Prerelease`, and `WorkingDirectory`) are supplied separately by the caller. They do not use the release-setting inheritance marker. Unknown keys, removed keys, null values, and invalid values fail before label provisioning.
+The file must contain a mapping of the release settings from `AutoCleanup` through `WhatIf` in the input table, excluding `SettingsFilePath` itself. The dependency/runtime inputs (`Debug`, `Verbose`, `Version`, `Prerelease`, and `WorkingDirectory`) are supplied separately by the caller. They do not use the release-setting inheritance marker. Unknown keys, removed keys, null values, and invalid values fail before label provisioning.
 
 ```yaml
 # .github\release.settings.yml
@@ -133,7 +133,7 @@ For an intentional custom path:
 
 ```yaml
 with:
-  ConfigurationFile: .github\custom-release.settings.yml
+  SettingsFilePath: .github\custom-release.settings.yml
 ```
 
 For an invocation-specific minor bump, even when the repository configures major:
@@ -145,10 +145,11 @@ with:
   VersionPrefix: ''
 ```
 
-To inherit the repository bump and force a read-only invocation:
+To select a custom settings file, inherit its bump, and force a read-only invocation:
 
 ```yaml
 with:
+  SettingsFilePath: .github\repository-release.settings.yml
   DefaultBump: inherit
   WhatIf: true
 ```

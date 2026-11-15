@@ -51,42 +51,42 @@ LogGroup 'Set configuration' {
         }
     }
 
-    $configurationPath = [Environment]::GetEnvironmentVariable('PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile')
-    if ($null -eq $configurationPath) {
-        $configurationPath = $actionDefinition.inputs.ConfigurationFile.default
+    $settingsFilePath = [Environment]::GetEnvironmentVariable('PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath')
+    if ($null -eq $settingsFilePath) {
+        $settingsFilePath = $actionDefinition.inputs.SettingsFilePath.default
     }
-    if ([string]::IsNullOrWhiteSpace($configurationPath)) {
-        throw 'ConfigurationFile must be a nonempty path.'
+    if ([string]::IsNullOrWhiteSpace($settingsFilePath)) {
+        throw 'SettingsFilePath must be a nonempty path.'
     }
     $pathResolver = $ExecutionContext.SessionState.Path
     $defaultConfigurationPath = $pathResolver.GetUnresolvedProviderPathFromPSPath(
-        $actionDefinition.inputs.ConfigurationFile.default
+        $actionDefinition.inputs.SettingsFilePath.default
     )
-    $configurationPath = $pathResolver.GetUnresolvedProviderPathFromPSPath($configurationPath)
+    $settingsFilePath = $pathResolver.GetUnresolvedProviderPathFromPSPath($settingsFilePath)
     $legacyConfigurationPath = Join-Path -Path (Split-Path -Path $defaultConfigurationPath -Parent) -ChildPath 'auto-release.yml'
     $pathComparison = [StringComparison]::Ordinal
     if ($IsWindows) {
         $pathComparison = [StringComparison]::OrdinalIgnoreCase
     }
-    $usesDefaultPath = [string]::Equals($configurationPath, $defaultConfigurationPath, $pathComparison)
-    $usesLegacyPath = [string]::Equals($configurationPath, $legacyConfigurationPath, $pathComparison)
-    $configurationExists = Test-Path -LiteralPath $configurationPath -PathType Leaf
+    $usesDefaultPath = [string]::Equals($settingsFilePath, $defaultConfigurationPath, $pathComparison)
+    $usesLegacyPath = [string]::Equals($settingsFilePath, $legacyConfigurationPath, $pathComparison)
+    $configurationExists = Test-Path -LiteralPath $settingsFilePath -PathType Leaf
     $legacyExists = Test-Path -LiteralPath $legacyConfigurationPath -PathType Leaf
     if ($usesLegacyPath -or ($legacyExists -and ($usesDefaultPath -or -not $configurationExists))) {
         throw (
             "Conventional settings [$legacyConfigurationPath] are no longer supported. " +
-            "Rename or reconcile the file into [$defaultConfigurationPath] and update ConfigurationFile " +
+            "Rename or reconcile the file into [$defaultConfigurationPath] and update SettingsFilePath " +
             'together with a compatible release-engine reference, or select an existing custom settings file.'
         )
     }
     $configuration = @{}
     if (-not $configurationExists) {
-        Write-Output "Configuration file not found at [$configurationPath]"
+        Write-Output "Settings file not found at [$settingsFilePath]"
     } else {
-        Write-Output "Reading from configuration file [$configurationPath]"
-        $configuration = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $configurationPath -Raw)
+        Write-Output "Reading settings file [$settingsFilePath]"
+        $configuration = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $settingsFilePath -Raw)
         if ($null -eq $configuration) {
-            throw "Release configuration [$configurationPath] must be a mapping of supported settings."
+            throw "Release settings file [$settingsFilePath] must be a mapping of supported settings."
         }
     }
 
