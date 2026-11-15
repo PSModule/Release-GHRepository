@@ -51,21 +51,21 @@ LogGroup 'Set configuration' {
         }
     }
 
-    $configurationPath = [Environment]::GetEnvironmentVariable('PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile')
-    if ($null -eq $configurationPath) {
-        $configurationPath = $actionDefinition.inputs.ConfigurationFile.default
+    $settingsFilePath = [Environment]::GetEnvironmentVariable('PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath')
+    if ($null -eq $settingsFilePath) {
+        $settingsFilePath = $actionDefinition.inputs.SettingsFilePath.default
     }
-    if ([string]::IsNullOrWhiteSpace($configurationPath)) {
-        throw 'ConfigurationFile must be a nonempty path.'
+    if ([string]::IsNullOrWhiteSpace($settingsFilePath)) {
+        throw 'SettingsFilePath must be a nonempty path.'
     }
     $configuration = @{}
-    if (-not (Test-Path -LiteralPath $configurationPath -PathType Leaf)) {
-        Write-Output "Configuration file not found at [$configurationPath]"
+    if (-not (Test-Path -LiteralPath $settingsFilePath -PathType Leaf)) {
+        Write-Output "Settings file not found at [$settingsFilePath]"
     } else {
-        Write-Output "Reading from configuration file [$configurationPath]"
-        $configuration = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $configurationPath -Raw)
+        Write-Output "Reading settings file [$settingsFilePath]"
+        $configuration = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $settingsFilePath -Raw)
         if ($null -eq $configuration) {
-            throw "Release configuration [$configurationPath] must be a mapping of supported settings."
+            throw "Release settings file [$settingsFilePath] must be a mapping of supported settings."
         }
     }
 

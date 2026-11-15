@@ -61,6 +61,7 @@ jobs:
       - name: Action-Test - Named overrides
         uses: ./
         with:
+          SettingsFilePath: .github\action-test.settings.yml
           DefaultBump: minor
           AutoCleanup: false
           DatePrereleaseFormat: ''

@@ -88,7 +88,7 @@ Release-setting inputs default to `inherit`. Omit an input, or set it to exactly
 | Name | Description | Effective default | Required |
 | --- | --- | --- | --- |
 | `AutoCleanup` | Delete prereleases after the pull request closes. | `true` | false |
-| `ConfigurationFile` | Read repository settings from this file. Explicit named release-setting inputs override file values. | `.github\auto-release.yml` | false |
+| `SettingsFilePath` | Read repository settings from this file path. Explicit named release-setting inputs override file values. | `.github\auto-release.yml` | false |
 | `DefaultBump` | Select the bump when no explicit bump or skip label exists. Accepts exactly `patch`, `minor`, or `major` with case-sensitive matching. | `patch` | false |
 | `CreateMajorTag` | Create or update the floating major tag after a stable release. | `true` | false |
 | `CreateMinorTag` | Create or update the floating minor tag after a stable release. | `true` | false |
@@ -107,9 +107,9 @@ Release-setting inputs default to `inherit`. Omit an input, or set it to exactly
 
 Use the `release:prerelease` label to select repository prerelease behavior. The similarly named `Prerelease` action input only controls dependency resolution for the GitHub module used internally.
 
-### Configuration file
+### Settings file path
 
-The default configuration file is `.github\auto-release.yml`. Change its path with `ConfigurationFile`.
+The default settings file path is `.github\auto-release.yml`. Use `SettingsFilePath` to select a custom file. Relative paths resolve from `WorkingDirectory`. Omit this input to use the default path; an empty or whitespace-only path is invalid. If the file is absent, shared defaults and explicit named inputs remain effective.
 
 Settings resolve in this order: shared defaults declared in `action.yml`, repository settings, then explicit named action inputs. An owned bump label overrides the valid effective `DefaultBump`. The action reports whether the bump comes from an owned label, a named action input, a repository setting, or the shared default.
 
@@ -117,7 +117,7 @@ The runner applies the `inherit` default only when a caller omits the input. An 
 
 The `inherit` marker applies only to release-setting action inputs. It does not relax repository settings validation: `DefaultBump: inherit` in the file is invalid, and a text value of `inherit` there remains literal text. Every supplied layer is validated, so a valid named input or owned label cannot hide an invalid repository value.
 
-The file must contain a mapping of the release settings from `AutoCleanup` through `WhatIf` in the input table, excluding `ConfigurationFile` itself. The dependency/runtime inputs (`Debug`, `Verbose`, `Version`, `Prerelease`, and `WorkingDirectory`) are supplied separately by the caller. They do not use the release-setting inheritance marker. Unknown keys, removed keys, null values, and invalid values fail before label provisioning.
+The file must contain a mapping of the release settings from `AutoCleanup` through `WhatIf` in the input table, excluding `SettingsFilePath` itself. The dependency/runtime inputs (`Debug`, `Verbose`, `Version`, `Prerelease`, and `WorkingDirectory`) are supplied separately by the caller. They do not use the release-setting inheritance marker. Unknown keys, removed keys, null values, and invalid values fail before label provisioning.
 
 ```yaml
 DatePrereleaseFormat: 'yyyyMMddHHmm'
@@ -135,10 +135,11 @@ with:
   VersionPrefix: ''
 ```
 
-To inherit the repository bump and force a read-only invocation:
+To select a custom settings file, inherit its bump, and force a read-only invocation:
 
 ```yaml
 with:
+  SettingsFilePath: .github\repository-release.settings.yml
   DefaultBump: inherit
   WhatIf: true
 ```
