@@ -71,6 +71,11 @@ jobs:
           DatePrereleaseFormat: yyyyMMdd
           VersionPrefix: v
           WhatIf: false
+          Debug: true
+          Verbose: true
+          WorkingDirectory: .github
+          Version: '[0.43.1]'
+          Prerelease: true
           '@ | Set-Content -LiteralPath $settingsFilePath
           "path=$settingsFilePath" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
 
@@ -81,6 +86,11 @@ jobs:
           AutoCleanup: false
           DatePrereleaseFormat: ''
           VersionPrefix: ''
+          Debug: ''
+          Verbose: ''
+          WorkingDirectory: ''
+          Version: ''
+          Prerelease: ''
           WhatIf: true
 
       - name: Action-Test - Explicit standard-value override
@@ -91,6 +101,11 @@ jobs:
           AutoCleanup: false
           DatePrereleaseFormat: ''
           VersionPrefix: ''
+          Debug: false
+          Verbose: false
+          WorkingDirectory: ${{ github.workspace }}
+          Version: '[0.43.1]'
+          Prerelease: false
           WhatIf: true
 
       - name: Remove caller settings
