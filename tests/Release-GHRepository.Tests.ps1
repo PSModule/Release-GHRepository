@@ -20,7 +20,8 @@ Describe 'Verified release modules' {
         $moduleContent = @'
 $null = New-Item -Path '__MARKER__' -ItemType File -Force
 function Get-ReleaseSecurityFixtureValue { 'verified package' }
-Export-ModuleMember -Function Get-ReleaseSecurityFixtureValue
+New-Alias -Name releaseFixtureAlias -Value Get-ReleaseSecurityFixtureValue
+Export-ModuleMember -Function Get-ReleaseSecurityFixtureValue -Alias releaseFixtureAlias
 '@
         $moduleContent.Replace('__MARKER__', $markerPath.Replace("'", "''")) | Set-Content -LiteralPath $modulePath
         $packagePath = Join-Path $fixtureRoot 'package.nupkg'
@@ -84,6 +85,16 @@ Export-ModuleMember -Function Get-ReleaseSecurityFixtureValue
 
         $null = Import-VerifiedReleaseModule @importParameters
 
+        Get-ReleaseSecurityFixtureValue | Should -Be 'verified package'
+    }
+
+    It 'reloads a verified module even when its exported aliases are already loaded' {
+        $null = Import-VerifiedReleaseModule @importParameters
+        $importParameters.DestinationPath = Join-Path $fixtureRoot 'verified-again'
+
+        $importResult = @(Import-VerifiedReleaseModule @importParameters 2>&1)
+
+        @($importResult | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
         Get-ReleaseSecurityFixtureValue | Should -Be 'verified package'
     }
 }

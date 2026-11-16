@@ -74,6 +74,7 @@ function Import-VerifiedReleaseModule {
             ModuleName      = $manifestPath
             RequiredVersion = $RequiredVersion
         }
+        Get-Module -Name $Name | Remove-Module -Force -ErrorAction Stop
         Import-Module -FullyQualifiedName $moduleSpecification -Global -Force -PassThru -ErrorAction Stop
     }
 }

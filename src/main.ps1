@@ -411,7 +411,11 @@ if ($createPrerelease -or $createRelease -or $whatIf) {
             }
         }
     }
-    Write-GitHubNotice -Title 'Release created' -Message $newVersion
+    if ($whatIf) {
+        Write-GitHubNotice -Title 'Release preview' -Message $newVersion
+    } else {
+        Write-GitHubNotice -Title 'Release created' -Message $newVersion
+    }
 } else {
     Write-Output 'Skipping release creation.'
 }
