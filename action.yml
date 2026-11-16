@@ -35,7 +35,7 @@ inputs:
     required: false
     default: NoRelease
   IncrementalPrerelease:
-    description: Control whether to automatically increment the prerelease number. If disabled, the action will ensure only one prerelease exists for a given branch.
+    description: Control whether to automatically increment the prerelease number. If disabled, the action replaces the prerelease for the pull request.
     required: false
     default: 'true'
   MajorLabels:
@@ -67,7 +67,7 @@ inputs:
     required: false
     default: v
   WhatIf:
-    description: If specified, the action will only log the changes it would make, but will not actually create or delete any releases or tags.
+    description: Simulate release and tag changes. Always enabled for pull_request checks. A true input cannot be disabled by the configuration file.
     required: false
     default: 'false'
   Debug:
@@ -81,6 +81,7 @@ inputs:
   Version:
     description: Specifies the version of the GitHub module to be installed. Accepts an exact version or a NuGet version range (for example '[1.2.0, 2.0.0)').
     required: false
+    default: '[0.43.1]'
   Prerelease:
     description: Allow prerelease versions if available.
     required: false
@@ -117,6 +118,7 @@ runs:
         Prerelease: ${{ inputs.Prerelease }}
         Verbose: ${{ inputs.Verbose }}
         Version: ${{ inputs.Version }}
+        PreserveCredentials: false
         Name: Release-GHRepository
         WorkingDirectory: ${{ inputs.WorkingDirectory }}
         Script: |
