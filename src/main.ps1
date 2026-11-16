@@ -136,7 +136,7 @@ LogGroup 'Event information - Object' {
     $githubEvent | Format-List | Out-String
 }
 
-$repositoryJson = gh repo view --repo $env:GITHUB_REPOSITORY --json defaultBranchRef
+$repositoryJson = gh repo view $env:GITHUB_REPOSITORY --json defaultBranchRef
 if ($LASTEXITCODE -ne 0) {
     throw 'Failed to read the repository default branch.'
 }
