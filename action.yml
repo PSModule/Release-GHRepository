@@ -1,5 +1,5 @@
 name: Release GHRepository (by PSModule)
-description: Automatically creates releases based on pull requests and labels.
+description: Creates GitHub releases from owned pull-request labels and effective release settings.
 author: PSModule
 branding:
   icon: upload-cloud
@@ -7,118 +7,148 @@ branding:
 
 inputs:
   AutoCleanup:
-    description: Control whether to automatically delete the prerelease tags after the stable release is created.
+    description: >-
+      Delete pull-request prereleases and their tags after the pull request closes.
+      Effective standard default: true.
     required: false
-    default: 'true'
-  AutoPatching:
-    description: Control whether to automatically handle patches. If disabled, the action will only create a patch release if the pull request has a 'patch' label.
-    required: false
-    default: 'true'
-  ConfigurationFile:
-    description: The path to the configuration file. Settings in the configuration file take precedence over the action inputs.
+  SettingsFilePath:
+    description: >-
+      Select the repository settings file before startup. Relative paths use an explicit WorkingDirectory,
+      otherwise github.workspace. Nonempty named inputs override file values; omitted or empty inputs retain them.
     required: false
     default: .github\auto-release.yml
+  DefaultBump:
+    description: >-
+      The release bump without an owned bump or skip label. Accepts exactly patch, minor, or major.
+      Effective standard default: patch. Omit or leave empty to follow repository policy.
+    required: false
   CreateMajorTag:
-    description: Control whether to create a major tag when a pull request is merged into the main branch.
+    description: >-
+      Control whether to create a major tag when a pull request is merged into the main branch.
+      Effective standard default: true.
     required: false
-    default: 'true'
   CreateMinorTag:
-    description: Control whether to create a minor tag when a pull request is merged into the main branch.
+    description: >-
+      Control whether to create a minor tag when a pull request is merged into the main branch.
+      Effective standard default: true.
     required: false
-    default: 'true'
   DatePrereleaseFormat:
-    description: If specified, uses a date based prerelease scheme. The format should be a valid .NET format string like 'yyyyMMddHHmm'.
+    description: >-
+      Format the existing prerelease date suffix with a valid .NET format such as yyyyMMddHHmm.
+      Effective standard default: empty string (no date suffix).
     required: false
-    default: ''
-  IgnoreLabels:
-    description: A comma separated list of labels that do not trigger a release.
-    required: false
-    default: NoRelease
   IncrementalPrerelease:
-    description: Control whether to automatically increment the prerelease number. If disabled, the action will ensure only one prerelease exists for a given branch.
+    description: >-
+      Automatically increment the prerelease number; when false, keep one prerelease for the branch.
+      Effective standard default: true.
     required: false
-    default: 'true'
-  MajorLabels:
-    description: A comma separated list of labels that trigger a major release.
-    required: false
-    default: major, breaking
-  MinorLabels:
-    description: A comma separated list of labels that trigger a minor release.
-    required: false
-    default: minor, feature
-  PatchLabels:
-    description: A comma separated list of labels that trigger a patch release.
-    required: false
-    default: patch, fix
   UsePRTitleAsReleaseName:
-    description: When enabled, uses the pull request title as the name for the GitHub release.
+    description: >-
+      Use the pull request title as the GitHub release name.
+      Effective standard default: false.
     required: false
-    default: 'false'
   UsePRBodyAsReleaseNotes:
-    description: When enabled, uses the pull request body as the release notes for the GitHub release.
+    description: >-
+      Use the pull request body as GitHub release notes.
+      Effective standard default: true.
     required: false
-    default: 'true'
   UsePRTitleAsNotesHeading:
-    description: When enabled, the release notes will begin with the pull request title as a H1 heading followed by the pull request body. The title will reference the pull request number.
+    description: >-
+      Begin release notes with the pull request title and number as an H1 heading.
+      Effective standard default: true.
     required: false
-    default: 'true'
   VersionPrefix:
-    description: The prefix to use for the version number.
+    description: >-
+      Prefix the version number.
+      Effective standard default: v.
     required: false
-    default: v
   WhatIf:
-    description: If specified, the action will only log the changes it would make, but will not actually create or delete any releases or tags.
+    description: >-
+      Log planned label, release, tag, and comment changes without mutating repository state.
+      Effective standard default: false.
     required: false
-    default: 'false'
   Debug:
-    description: Enable debug output.
+    description: >-
+      Enable GitHub-Script debug output. Effective standard default: false.
     required: false
-    default: 'false'
   Verbose:
-    description: Enable verbose output.
+    description: >-
+      Enable GitHub-Script verbose output. Effective standard default: false.
     required: false
-    default: 'false'
   Version:
-    description: Specifies the version of the GitHub module to be installed. Accepts an exact version or a NuGet version range (for example '[1.2.0, 2.0.0)').
+    description: >-
+      Select the GitHub module dependency by exact version or NuGet version range, such as '[1.2.0, 2.0.0)'.
+      Effective standard default: empty string (latest dependency version).
     required: false
   Prerelease:
-    description: Allow prerelease versions if available.
+    description: >-
+      Allow prerelease versions of the GitHub module dependency. Effective standard default: false.
+      This does not select repository prerelease mode; use the release:prerelease label.
     required: false
-    default: 'false'
   WorkingDirectory:
-    description: The working directory where the script will run from.
+    description: >-
+      Set the execution directory before GitHub-Script starts. Relative values use github.workspace.
+      Effective standard default: github.workspace. A file-defined directory does not select another settings file.
     required: false
-    default: ${{ github.workspace }}
 
 runs:
   using: composite
   steps:
-    - name: Release-GHRepository
-      uses: PSModule/GitHub-Script@8083ec1f733f00357ee4d0db0c6056686e483bc0 # v1.9.0
+    - name: Resolve release settings
+      id: settings
+      shell: pwsh
+      working-directory: ${{ github.workspace }}
       env:
+        PSMODULE_AUTO_RELEASE_ACTION_PATH: ${{ github.action_path }}
+        PSMODULE_AUTO_RELEASE_SETTING_METADATA: |
+          AutoCleanup: { Type: Boolean, Default: true, Phase: Release }
+          DefaultBump: { Type: Bump, Default: patch, Phase: Release }
+          CreateMajorTag: { Type: Boolean, Default: true, Phase: Release }
+          CreateMinorTag: { Type: Boolean, Default: true, Phase: Release }
+          DatePrereleaseFormat: { Type: DateTimeFormat, Default: '', Phase: Release }
+          IncrementalPrerelease: { Type: Boolean, Default: true, Phase: Release }
+          UsePRTitleAsReleaseName: { Type: Boolean, Default: false, Phase: Release }
+          UsePRBodyAsReleaseNotes: { Type: Boolean, Default: true, Phase: Release }
+          UsePRTitleAsNotesHeading: { Type: Boolean, Default: true, Phase: Release }
+          VersionPrefix: { Type: Text, Default: v, Phase: Release }
+          WhatIf: { Type: Boolean, Default: false, Phase: Release }
+          Debug: { Type: Boolean, Default: false, Phase: Startup }
+          Verbose: { Type: Boolean, Default: false, Phase: Startup }
+          WorkingDirectory: { Type: DirectoryPath, Default: '.', Phase: Startup }
+          Version: { Type: VersionConstraint, Default: '', Phase: Startup }
+          Prerelease: { Type: Boolean, Default: false, Phase: Startup }
         PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup: ${{ inputs.AutoCleanup }}
-        PSMODULE_AUTO_RELEASE_INPUT_AutoPatching: ${{ inputs.AutoPatching }}
-        PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile: ${{ inputs.ConfigurationFile }}
+        PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath: ${{ inputs.SettingsFilePath }}
+        PSMODULE_AUTO_RELEASE_INPUT_DefaultBump: ${{ inputs.DefaultBump }}
         PSMODULE_AUTO_RELEASE_INPUT_CreateMajorTag: ${{ inputs.CreateMajorTag }}
         PSMODULE_AUTO_RELEASE_INPUT_CreateMinorTag: ${{ inputs.CreateMinorTag }}
         PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat: ${{ inputs.DatePrereleaseFormat }}
-        PSMODULE_AUTO_RELEASE_INPUT_IgnoreLabels: ${{ inputs.IgnoreLabels }}
         PSMODULE_AUTO_RELEASE_INPUT_IncrementalPrerelease: ${{ inputs.IncrementalPrerelease }}
-        PSMODULE_AUTO_RELEASE_INPUT_MajorLabels: ${{ inputs.MajorLabels }}
-        PSMODULE_AUTO_RELEASE_INPUT_MinorLabels: ${{ inputs.MinorLabels }}
-        PSMODULE_AUTO_RELEASE_INPUT_PatchLabels: ${{ inputs.PatchLabels }}
         PSMODULE_AUTO_RELEASE_INPUT_UsePRBodyAsReleaseNotes: ${{ inputs.UsePRBodyAsReleaseNotes }}
         PSMODULE_AUTO_RELEASE_INPUT_UsePRTitleAsReleaseName: ${{ inputs.UsePRTitleAsReleaseName }}
         PSMODULE_AUTO_RELEASE_INPUT_UsePRTitleAsNotesHeading: ${{ inputs.UsePRTitleAsNotesHeading }}
         PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix: ${{ inputs.VersionPrefix }}
         PSMODULE_AUTO_RELEASE_INPUT_WhatIf: ${{ inputs.WhatIf }}
+        PSMODULE_AUTO_RELEASE_INPUT_Debug: ${{ inputs.Debug }}
+        PSMODULE_AUTO_RELEASE_INPUT_Verbose: ${{ inputs.Verbose }}
+        PSMODULE_AUTO_RELEASE_INPUT_WorkingDirectory: ${{ inputs.WorkingDirectory }}
+        PSMODULE_AUTO_RELEASE_INPUT_Version: ${{ inputs.Version }}
+        PSMODULE_AUTO_RELEASE_INPUT_Prerelease: ${{ inputs.Prerelease }}
+      run: |
+        $null = & (Join-Path -Path $env:PSMODULE_AUTO_RELEASE_ACTION_PATH -ChildPath 'src\Initialize-ReleaseConfiguration.ps1')
+
+    - name: Release-GHRepository
+      uses: PSModule/GitHub-Script@8083ec1f733f00357ee4d0db0c6056686e483bc0 # v1.9.0
+      env:
+        PSMODULE_AUTO_RELEASE_ACTION_PATH: ${{ github.action_path }}
+        PSMODULE_AUTO_RELEASE_RESOLVED_SETTINGS: ${{ steps.settings.outputs.ReleaseSettings }}
       with:
-        Debug: ${{ inputs.Debug }}
-        Prerelease: ${{ inputs.Prerelease }}
-        Verbose: ${{ inputs.Verbose }}
-        Version: ${{ inputs.Version }}
+        Debug: ${{ steps.settings.outputs.Debug }}
+        Prerelease: ${{ steps.settings.outputs.Prerelease }}
+        Verbose: ${{ steps.settings.outputs.Verbose }}
+        Version: ${{ steps.settings.outputs.Version }}
         Name: Release-GHRepository
-        WorkingDirectory: ${{ inputs.WorkingDirectory }}
+        WorkingDirectory: ${{ steps.settings.outputs.WorkingDirectory }}
         Script: |
-          # Release-GHRepository
-          ${{ github.action_path }}/src/main.ps1
+          $releaseSettings = ConvertFrom-Json -InputObject $env:PSMODULE_AUTO_RELEASE_RESOLVED_SETTINGS
+          & (Join-Path -Path $env:PSMODULE_AUTO_RELEASE_ACTION_PATH -ChildPath 'src\main.ps1') -Settings $releaseSettings
