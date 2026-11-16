@@ -12,19 +12,28 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-  pull-requests: read
+permissions: {}
 
 jobs:
   ActionTestDefault:
     name: Action-Test - [Default]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Checkout repo
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - name: Run security regression tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Install-PSResource -Name Pester -Version '[6.1.0]' -Repository PSGallery -TrustRepository
+          Import-Module -Name Pester -RequiredVersion 6.1.0
+          Invoke-Pester -Path (Join-Path $env:GITHUB_WORKSPACE 'tests') -CI
 
       - name: Action-Test
         uses: ./

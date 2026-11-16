@@ -1,0 +1,5 @@
+name: Lint repository
+description: Run the reviewed Super-Linter container.
+runs:
+  using: docker
+  image: Dockerfile
