@@ -28,6 +28,7 @@ jobs:
         env:
           MULTI_STATUS: false
           ENABLE_GITHUB_PULL_REQUEST_SUMMARY_COMMENT: false
+          TRIVY_IGNOREFILE: .github/linters/trivy-ignore.yml
           VALIDATE_BIOME_FORMAT: false
           VALIDATE_JSCPD: false
           VALIDATE_JSON_PRETTIER: false

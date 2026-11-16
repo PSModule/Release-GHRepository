@@ -128,7 +128,7 @@ jobs:
           persist-credentials: false
 
       - name: Check release
-        uses: PSModule/Release-GHRepository@4b9516dde0adb82a7f445b456ad906d1e611dfdf # Trusted publisher and dependency verification
+        uses: PSModule/Release-GHRepository@a937f4db5d320c01ecc1f934a6cdf28f5a6cc575 # Trusted publisher and dependency verification
         with:
           WhatIf: true
 ```
@@ -171,7 +171,7 @@ jobs:
           persist-credentials: false
 
       - name: Publish release
-        uses: PSModule/Release-GHRepository@4b9516dde0adb82a7f445b456ad906d1e611dfdf # Trusted publisher and dependency verification
+        uses: PSModule/Release-GHRepository@a937f4db5d320c01ecc1f934a6cdf28f5a6cc575 # Trusted publisher and dependency verification
 ```
 
 Do not replace the publisher's checkout ref with the PR head, `workflow_run.head_sha`, or an artifact from the check run.
