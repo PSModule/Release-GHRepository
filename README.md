@@ -158,8 +158,9 @@ Requested write permissions do not override the read-only restriction for normal
 The action checks each downloaded package before extraction or import and imports the verified module by its full path.
 Update a version and its hash together in a reviewed PR. Do not change a hash only to make a failed verification pass.
 
-The repository linter uses a local Docker action with a digest-pinned base image.
-Dependabot checks that Dockerfile for image updates and checks workflow action pins separately.
+The repository linter uses the upstream Super-Linter action pinned to a full commit SHA.
+Dependabot checks workflow action pins for updates.
+The upstream action selects its container image by version tag, so the action SHA does not lock the container image digest.
 
 ## Local checks
 

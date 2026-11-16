@@ -14,12 +14,3 @@ updates:
       interval: daily
     cooldown:
       default-days: 7
-  - package-ecosystem: docker
-    directory: /.github/actions/linter
-    labels:
-      - dependencies
-      - docker
-    schedule:
-      interval: daily
-    cooldown:
-      default-days: 7

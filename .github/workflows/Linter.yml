@@ -24,11 +24,10 @@ jobs:
           fetch-depth: 0
 
       - name: Lint code base
-        uses: ./.github/actions/linter
+        uses: super-linter/super-linter@4ce20838b8ab83717e78138c5b3a1407148e0918 # v8.7.0
         env:
           MULTI_STATUS: false
           ENABLE_GITHUB_PULL_REQUEST_SUMMARY_COMMENT: false
-          TRIVY_IGNOREFILE: .github/linters/trivy-ignore.yml
           VALIDATE_BIOME_FORMAT: false
           VALIDATE_JSCPD: false
           VALIDATE_JSON_PRETTIER: false
