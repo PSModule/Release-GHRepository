@@ -13,9 +13,9 @@ Release-GHRepository follows:
 
 ## How it works
 
-The check workflow runs on regular `pull_request` events for the main branch. It uses read-only permissions and simulates release changes.
-A separate `workflow_run` publisher runs after a successful check. The publisher executes only code and configuration from the default branch.
-It reads PR metadata from the GitHub API. It does not check out PR code or download PR artifacts.
+One release workflow runs on regular `pull_request` events for the main branch.
+It calls an action pinned to a reviewed commit and reads configuration from a trusted checkout.
+It does not execute the PR's local action or scripts.
 
 The following labels will inform the action what kind of release to create:
 - For a major release, and increasing the first number in the version use:
@@ -29,12 +29,12 @@ The following labels will inform the action what kind of release to create:
   - `fix`
 
 Add the `prerelease` label to create prereleases while a same-repository PR is open.
-Prereleases use the checked head commit and a PR-specific tag, such as `v1.2.3-pr42.1`.
-When the PR is merged, the publisher creates a stable release at its merge commit. Closing an unmerged PR does not create a stable release.
+Prereleases use the PR head commit and a PR-specific tag, such as `v1.2.3-pr42.1`.
+When the PR is merged, the action creates a stable release at its merge commit. Closing an unmerged PR does not create a stable release.
 With `AutoCleanup` enabled, closing or merging the PR removes only prereleases in that PR's tag namespace.
 Other prereleases are left unchanged.
 
-Fork PR checks remain read-only. The publisher skips fork prereleases and can publish a stable release after the PR is merged.
+Fork PR checks remain read-only. The release workflow skips fork PRs, including their merge events, because their regular PR tokens cannot publish.
 Do not enable write tokens for fork checks.
 
 > [!NOTE]
@@ -63,7 +63,7 @@ The action can be configured using the following settings:
 | `UsePRBodyAsReleaseNotes` | When enabled, uses the pull request body as the release notes for the GitHub release. | `true` | false |
 | `UsePRTitleAsNotesHeading` | When enabled, the release notes will begin with the pull request title as a H1 heading followed by the pull request body. The title will include a reference to the PR number. | `true` | false |
 | `VersionPrefix` | The prefix to use for the version number. | `v` | false |
-| `WhatIf` | Simulate release and tag changes. Always enabled for `pull_request` checks. A true input cannot be disabled by the configuration file. | `false` | false |
+| `WhatIf` | Simulate release and tag changes. Set this input to `true` for read-only checks. A true input cannot be disabled by the configuration file. | `false` | false |
 | `Debug` | Enable debug output. | `'false'` | false |
 | `Verbose` | Enable verbose output. | `'false'` | false |
 | `Version` | Specifies the version of the GitHub module to install. Accepts an exact version or a NuGet version range (for example `[1.2.0, 2.0.0)`). | `[0.43.1]` | false |
@@ -75,8 +75,9 @@ The action can be configured using the following settings:
 The configuration file is a YAML file that can be used to configure the action.
 By default, the configuration file is expected at `.github\auto-release.yml`, which can be changed using the `ConfigurationFile` setting.
 The action's configuration can be changed by altering the settings in the configuration file.
-The publisher reads this file from its trusted default-branch checkout, not from the PR branch.
-Configuration cannot turn off an explicit `WhatIf: true` input or enable writes during a regular PR check.
+The example reads this file from the PR base commit while the PR is open and from the approved merge commit after merge.
+It does not read configuration changes from an unmerged PR.
+Configuration cannot turn off an explicit `WhatIf: true` input.
 
 ```yaml
 DatePrereleaseFormat: 'yyyyMMddHHmm'
@@ -88,12 +89,8 @@ This example uses the date format for the prerelease, disables the incremental p
 
 ## Example
 
-Add both workflows to your default branch. The publisher starts only after its workflow file exists on that branch.
-These examples use GitHub-hosted Ubuntu runners.
-
-### Read-only PR checks
-
-Save this workflow as `.github/workflows/Release.yml`:
+Save this single workflow as `.github/workflows/Release.yml`. The example uses a GitHub-hosted Ubuntu runner.
+The release job has write permissions, so it calls a pinned action instead of running the PR's local `./` action.
 
 ```yaml
 name: Release
@@ -109,81 +106,42 @@ on:
       - synchronize
       - labeled
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 permissions: {}
 
 jobs:
-  Check:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Check release
-        uses: PSModule/Release-GHRepository@a937f4db5d320c01ecc1f934a6cdf28f5a6cc575 # Trusted publisher and dependency verification
-        with:
-          WhatIf: true
-```
-
-### Trusted publication
-
-Save this workflow as `.github/workflows/Publish-Release.yml`. Keep `workflows: [Release]` equal to the check workflow's `name`.
-The publisher has write access because it creates releases, updates release tags, and posts PR comments.
-Only trusted default-branch code runs with this token.
-
-```yaml
-name: Publish Release
-
-on:
-  workflow_run:
-    workflows: [Release]
-    types: [completed]
-
-permissions: {}
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.repository }}
-  queue: max
-  cancel-in-progress: false
-
-jobs:
-  Publish:
-    if: >-
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'success'
+  Release:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.repository }}
+      queue: max
+      cancel-in-progress: false
     steps:
       - name: Checkout trusted configuration
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.merged && github.event.pull_request.merge_commit_sha || github.event.pull_request.base.sha }}
           persist-credentials: false
 
-      - name: Publish release
-        uses: PSModule/Release-GHRepository@a937f4db5d320c01ecc1f934a6cdf28f5a6cc575 # Trusted publisher and dependency verification
+      - name: Release
+        uses: PSModule/Release-GHRepository@bee1a2c437920824370c8b42a8cb6a2916cc2cb4 # Verified dependencies and direct PR publication
 ```
 
-Do not replace the publisher's checkout ref with the PR head, `workflow_run.head_sha`, or an artifact from the check run.
-The action validates the PR association and checked commit before publication. A stale run fails instead of publishing a later, unchecked commit.
+Do not replace the trusted checkout ref with the PR head or add steps that execute files from an unmerged PR in this write-capable job.
+Keep the action pin under review when changing the publisher. Use `WhatIf: true` with read-only permissions to test proposed local action changes.
+The action checks live PR metadata before writing. A stale event fails instead of publishing a later commit or a changed PR state.
 Major and minor tags are updated through the GitHub API. Checkout credentials are not required.
 
 Use reviewed commit SHAs for external actions. Enable GitHub Actions dependency updates in the consuming repository to keep these pins current.
+This setup trusts contributors who can change workflows in the repository. Any additional publication approval boundary must be enforced by repository or organization policy.
 
 ## Permissions
 
-Set permissions explicitly for each job. Checks need only `contents: read` and `pull-requests: read`.
-The trusted publishing job needs these scopes:
+Set permissions explicitly for each job. Read-only checks need only `contents: read` and `pull-requests: read`, with `WhatIf: true`.
+The release job needs these scopes:
 
 ```yaml
 permissions:
