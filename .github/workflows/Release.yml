@@ -16,25 +16,22 @@ on:
       - 'action.yml'
       - 'src/**'
 
-permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # Required to create releases
+  pull-requests: write # Required to create comments on the PRs
 
 jobs:
   Release:
-    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.repository }}
-      queue: max
-      cancel-in-progress: false
     steps:
-      - name: Checkout trusted configuration
+      - name: Checkout repo
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event.pull_request.merged && github.event.pull_request.merge_commit_sha || github.event.pull_request.base.sha }}
           persist-credentials: false
 
       - name: Release
-        uses: PSModule/Release-GHRepository@bee1a2c437920824370c8b42a8cb6a2916cc2cb4 # Verified dependencies and direct PR publication
+        uses: ./

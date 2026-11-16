@@ -8,14 +8,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions: {}
+permissions:
+  contents: read
+  packages: read
+  statuses: write
 
 jobs:
   Lint:
     name: Lint code base
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - name: Checkout repo
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -26,8 +27,7 @@ jobs:
       - name: Lint code base
         uses: super-linter/super-linter@4ce20838b8ab83717e78138c5b3a1407148e0918 # v8.7.0
         env:
-          MULTI_STATUS: false
-          ENABLE_GITHUB_PULL_REQUEST_SUMMARY_COMMENT: false
+          GITHUB_TOKEN: ${{ github.token }}
           VALIDATE_BIOME_FORMAT: false
           VALIDATE_JSCPD: false
           VALIDATE_JSON_PRETTIER: false
