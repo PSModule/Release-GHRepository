@@ -13,8 +13,8 @@ inputs:
     required: false
   SettingsFilePath:
     description: >-
-      The path to the repository settings file. Explicit named release-setting inputs override file values;
-      omitted or empty release-setting inputs retain file policy and action standards.
+      Select the repository settings file before startup. Relative paths use an explicit WorkingDirectory,
+      otherwise github.workspace. Nonempty named inputs override file values; omitted or empty inputs retain them.
     required: false
     default: .github\auto-release.yml
   DefaultBump:
@@ -68,43 +68,55 @@ inputs:
       Effective standard default: false.
     required: false
   Debug:
-    description: Enable debug output.
+    description: >-
+      Enable GitHub-Script debug output. Effective standard default: false.
     required: false
-    default: 'false'
   Verbose:
-    description: Enable verbose output.
+    description: >-
+      Enable GitHub-Script verbose output. Effective standard default: false.
     required: false
-    default: 'false'
   Version:
-    description: Specifies the version of the GitHub module to be installed. Accepts an exact version or a NuGet version range (for example '[1.2.0, 2.0.0)').
+    description: >-
+      Select the GitHub module dependency by exact version or NuGet version range, such as '[1.2.0, 2.0.0)'.
+      Effective standard default: empty string (latest dependency version).
     required: false
   Prerelease:
-    description: Allow prerelease versions of the GitHub module dependency. This does not control repository releases; use the release:prerelease label.
+    description: >-
+      Allow prerelease versions of the GitHub module dependency. Effective standard default: false.
+      This does not select repository prerelease mode; use the release:prerelease label.
     required: false
-    default: 'false'
   WorkingDirectory:
-    description: The working directory where the script will run from.
+    description: >-
+      Set the execution directory before GitHub-Script starts. Relative values use github.workspace.
+      Effective standard default: github.workspace. A file-defined directory does not select another settings file.
     required: false
-    default: ${{ github.workspace }}
 
 runs:
   using: composite
   steps:
-    - name: Release-GHRepository
-      uses: PSModule/GitHub-Script@8083ec1f733f00357ee4d0db0c6056686e483bc0 # v1.9.0
+    - name: Resolve release settings
+      id: settings
+      shell: pwsh
+      working-directory: ${{ github.workspace }}
       env:
-        PSMODULE_AUTO_RELEASE_DEFAULT_SETTINGS: |
-          AutoCleanup: true
-          DefaultBump: patch
-          CreateMajorTag: true
-          CreateMinorTag: true
-          DatePrereleaseFormat: ''
-          IncrementalPrerelease: true
-          UsePRTitleAsReleaseName: false
-          UsePRBodyAsReleaseNotes: true
-          UsePRTitleAsNotesHeading: true
-          VersionPrefix: v
-          WhatIf: false
+        PSMODULE_AUTO_RELEASE_ACTION_PATH: ${{ github.action_path }}
+        PSMODULE_AUTO_RELEASE_SETTING_METADATA: |
+          AutoCleanup: { Type: Boolean, Default: true, Phase: Release }
+          DefaultBump: { Type: Bump, Default: patch, Phase: Release }
+          CreateMajorTag: { Type: Boolean, Default: true, Phase: Release }
+          CreateMinorTag: { Type: Boolean, Default: true, Phase: Release }
+          DatePrereleaseFormat: { Type: DateTimeFormat, Default: '', Phase: Release }
+          IncrementalPrerelease: { Type: Boolean, Default: true, Phase: Release }
+          UsePRTitleAsReleaseName: { Type: Boolean, Default: false, Phase: Release }
+          UsePRBodyAsReleaseNotes: { Type: Boolean, Default: true, Phase: Release }
+          UsePRTitleAsNotesHeading: { Type: Boolean, Default: true, Phase: Release }
+          VersionPrefix: { Type: Text, Default: v, Phase: Release }
+          WhatIf: { Type: Boolean, Default: false, Phase: Release }
+          Debug: { Type: Boolean, Default: false, Phase: Startup }
+          Verbose: { Type: Boolean, Default: false, Phase: Startup }
+          WorkingDirectory: { Type: DirectoryPath, Default: '.', Phase: Startup }
+          Version: { Type: VersionConstraint, Default: '', Phase: Startup }
+          Prerelease: { Type: Boolean, Default: false, Phase: Startup }
         PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup: ${{ inputs.AutoCleanup }}
         PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath: ${{ inputs.SettingsFilePath }}
         PSMODULE_AUTO_RELEASE_INPUT_DefaultBump: ${{ inputs.DefaultBump }}
@@ -117,13 +129,26 @@ runs:
         PSMODULE_AUTO_RELEASE_INPUT_UsePRTitleAsNotesHeading: ${{ inputs.UsePRTitleAsNotesHeading }}
         PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix: ${{ inputs.VersionPrefix }}
         PSMODULE_AUTO_RELEASE_INPUT_WhatIf: ${{ inputs.WhatIf }}
+        PSMODULE_AUTO_RELEASE_INPUT_Debug: ${{ inputs.Debug }}
+        PSMODULE_AUTO_RELEASE_INPUT_Verbose: ${{ inputs.Verbose }}
+        PSMODULE_AUTO_RELEASE_INPUT_WorkingDirectory: ${{ inputs.WorkingDirectory }}
+        PSMODULE_AUTO_RELEASE_INPUT_Version: ${{ inputs.Version }}
+        PSMODULE_AUTO_RELEASE_INPUT_Prerelease: ${{ inputs.Prerelease }}
+      run: |
+        $null = & (Join-Path -Path $env:PSMODULE_AUTO_RELEASE_ACTION_PATH -ChildPath 'src\Initialize-ReleaseConfiguration.ps1')
+
+    - name: Release-GHRepository
+      uses: PSModule/GitHub-Script@8083ec1f733f00357ee4d0db0c6056686e483bc0 # v1.9.0
+      env:
+        PSMODULE_AUTO_RELEASE_ACTION_PATH: ${{ github.action_path }}
+        PSMODULE_AUTO_RELEASE_RESOLVED_SETTINGS: ${{ steps.settings.outputs.ReleaseSettings }}
       with:
-        Debug: ${{ inputs.Debug }}
-        Prerelease: ${{ inputs.Prerelease }}
-        Verbose: ${{ inputs.Verbose }}
-        Version: ${{ inputs.Version }}
+        Debug: ${{ steps.settings.outputs.Debug }}
+        Prerelease: ${{ steps.settings.outputs.Prerelease }}
+        Verbose: ${{ steps.settings.outputs.Verbose }}
+        Version: ${{ steps.settings.outputs.Version }}
         Name: Release-GHRepository
-        WorkingDirectory: ${{ inputs.WorkingDirectory }}
+        WorkingDirectory: ${{ steps.settings.outputs.WorkingDirectory }}
         Script: |
-          # Release-GHRepository
-          ${{ github.action_path }}/src/main.ps1
+          $releaseSettings = ConvertFrom-Json -InputObject $env:PSMODULE_AUTO_RELEASE_RESOLVED_SETTINGS
+          & (Join-Path -Path $env:PSMODULE_AUTO_RELEASE_ACTION_PATH -ChildPath 'src\main.ps1') -Settings $releaseSettings

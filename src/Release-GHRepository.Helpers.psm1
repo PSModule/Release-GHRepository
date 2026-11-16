@@ -1,16 +1,156 @@
 $ErrorActionPreference = 'Stop'
 
+$resourceGetModule = Import-Module -Name Microsoft.PowerShell.PSResourceGet -PassThru
+$versioningPath = Join-Path -Path $resourceGetModule.ModuleBase -ChildPath 'dependencies\NuGet.Versioning.dll'
+$script:versionRangeType = [Reflection.Assembly]::LoadFrom($versioningPath).GetType('NuGet.Versioning.VersionRange', $true)
+
+function Get-ReleaseSettingSchema {
+    <#
+        .SYNOPSIS
+        Read the private setting schema from the action's own metadata.
+
+        .DESCRIPTION
+        Require one complete schema for the named settings. Keep the file
+        selector separate from the setting types, standards, and destinations.
+
+        .EXAMPLE
+        Get-ReleaseSettingSchema -Path $actionPath
+
+        Return the action's validated setting definitions.
+
+        .INPUTS
+        None
+
+        You can't pipe objects to Get-ReleaseSettingSchema.
+
+        .OUTPUTS
+        System.Collections.IDictionary
+
+        The private setting definitions.
+    #>
+    [OutputType([System.Collections.IDictionary])]
+    [CmdletBinding()]
+    param(
+        # The full path to the action's own metadata.
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Path
+    )
+
+    $actionDefinition = ConvertFrom-Yaml -Yaml ([IO.File]::ReadAllText($Path))
+    $metadataYaml = $actionDefinition.runs.steps[0].env.PSMODULE_AUTO_RELEASE_SETTING_METADATA
+    if ($metadataYaml -isnot [string] -or [string]::IsNullOrWhiteSpace($metadataYaml)) {
+        throw 'The action release standards must be a nonempty YAML mapping.'
+    }
+    $metadata = ConvertFrom-Yaml -Yaml $metadataYaml -Ordered
+    if ($metadata -isnot [System.Collections.IDictionary]) {
+        throw 'The action release standards must be a mapping of setting definitions.'
+    }
+    $settingNames = @($actionDefinition.inputs.Keys | Where-Object { $_ -ne 'SettingsFilePath' })
+    foreach ($name in $settingNames) {
+        if ($metadata.Keys -notcontains $name) {
+            throw "Release standard defaults are missing required setting [$name]."
+        }
+    }
+    foreach ($name in $metadata.Keys) {
+        if ($settingNames -notcontains $name) {
+            throw "Unsupported release setting [$name] in the action metadata."
+        }
+        $definition = $metadata[$name]
+        if ($definition -isnot [System.Collections.IDictionary] -or
+            $definition.Keys -notcontains 'Default' -or $definition.Keys -notcontains 'Type' -or
+            $definition.Keys -notcontains 'Phase' -or $definition.Count -ne 3) {
+            throw "Invalid metadata for release setting [$name]. Supply Type, Default, and Phase."
+        }
+        if (@('Boolean', 'Text', 'Bump', 'DateTimeFormat', 'VersionConstraint', 'DirectoryPath') -cnotcontains $definition.Type) {
+            throw "Invalid metadata type for release setting [$name]."
+        }
+        if (@('Startup', 'Release') -cnotcontains $definition.Phase) {
+            throw "Invalid metadata phase for release setting [$name]. Use Startup or Release."
+        }
+    }
+    $metadata
+}
+
+function Resolve-ReleaseFileSystemPath {
+    <#
+        .SYNOPSIS
+        Resolve a literal file-system path from a known directory.
+
+        .DESCRIPTION
+        Resolve relative paths without using the process's current directory.
+        Reject non-file-system providers and invalid path characters.
+
+        .EXAMPLE
+        Resolve-ReleaseFileSystemPath -Name 'SettingsFilePath' -Path '.github\auto-release.yml' -BaseDirectory $workspace
+
+        Return the selected absolute file-system path.
+
+        .INPUTS
+        None
+
+        You can't pipe objects to Resolve-ReleaseFileSystemPath.
+
+        .OUTPUTS
+        System.String
+
+        The absolute literal path.
+    #>
+    [OutputType([string])]
+    [CmdletBinding()]
+    param(
+        # The setting name used in path diagnostics.
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Name,
+
+        # The literal path to resolve.
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string] $Path,
+
+        # The absolute directory for relative paths.
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $BaseDirectory
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "$Name must be a nonempty path."
+    }
+    $candidate = $Path
+    if (-not [IO.Path]::IsPathRooted($Path) -and $Path -notmatch '\A[^\\/]+:') {
+        $candidate = Join-Path -Path $BaseDirectory -ChildPath $Path
+    }
+    $provider = $null
+    $drive = $null
+    $fullPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(
+        $candidate, [ref] $provider, [ref] $drive
+    )
+    if ($provider.Name -ne 'FileSystem') {
+        throw "$Name must use a FileSystem path."
+    }
+    $fullPath = [IO.Path]::GetFullPath($fullPath)
+    $relativePart = $fullPath.Substring([IO.Path]::GetPathRoot($fullPath).Length)
+    foreach ($part in $relativePart -split '[\\/]') {
+        if ($part.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0) {
+            throw "$Name must use a valid FileSystem path."
+        }
+    }
+    $fullPath
+}
+
 function ConvertTo-ReleaseSettingValue {
     <#
         .SYNOPSIS
         Validate and convert one supplied release-setting value.
 
         .DESCRIPTION
-        Preserve valid text values, normalize booleans, and validate default
-        bumps and prerelease date formats before settings are combined.
+        Use the private schema type to validate text, booleans, bumps, date
+        formats, dependency versions, and execution directories.
 
         .EXAMPLE
-        ConvertTo-ReleaseSettingValue -Name 'AutoCleanup' -Value 'false'
+        ConvertTo-ReleaseSettingValue -Name 'AutoCleanup' -Type Boolean -Value 'false' -WorkspacePath $workspace
 
         Return the Boolean false value.
 
@@ -37,24 +177,24 @@ function ConvertTo-ReleaseSettingValue {
         [ValidateNotNullOrEmpty()]
         [string] $Name,
 
+        # The type supplied by the action's private schema.
+        [Parameter(Mandatory)]
+        [ValidateSet('Boolean', 'Text', 'Bump', 'DateTimeFormat', 'VersionConstraint', 'DirectoryPath')]
+        [string] $Type,
+
         # The supplied value, including null so invalid values can be diagnosed.
         [Parameter(Mandatory)]
         [AllowNull()]
         [AllowEmptyString()]
-        [object] $Value
+        [object] $Value,
+
+        # The known workspace for relative execution-directory values.
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $WorkspacePath
     )
 
-    $booleanSettings = @(
-        'AutoCleanup'
-        'CreateMajorTag'
-        'CreateMinorTag'
-        'IncrementalPrerelease'
-        'UsePRTitleAsReleaseName'
-        'UsePRBodyAsReleaseNotes'
-        'UsePRTitleAsNotesHeading'
-        'WhatIf'
-    )
-    if ($booleanSettings -contains $Name) {
+    if ($Type -eq 'Boolean') {
         if ($Value -is [bool]) {
             $Value
         } elseif ($Value -is [string] -and @('true', 'false') -contains $Value) {
@@ -67,14 +207,31 @@ function ConvertTo-ReleaseSettingValue {
     if ($Value -isnot [string]) {
         throw "Invalid release setting [$Name]. Use a string value."
     }
-    if ($Name -eq 'DefaultBump') {
+    if ($Type -eq 'Bump') {
         $null = ConvertTo-ReleaseBump -DefaultBump $Value
     }
-    if ($Name -eq 'DatePrereleaseFormat' -and -not [string]::IsNullOrEmpty($Value)) {
+    if ($Type -eq 'DateTimeFormat' -and -not [string]::IsNullOrEmpty($Value)) {
         try {
             $null = [datetime]::new(2000, 1, 1).ToString($Value, [Globalization.CultureInfo]::InvariantCulture)
         } catch [FormatException] {
             throw 'Invalid DatePrereleaseFormat. Use a valid .NET date and time format string.'
+        }
+    }
+    if ($Type -eq 'VersionConstraint' -and -not [string]::IsNullOrEmpty($Value)) {
+        $versionRange = $null
+        if (-not $script:versionRangeType::TryParse($Value, [ref] $versionRange)) {
+            throw "Invalid release setting [$Name]. Use an exact dependency version or a NuGet version range."
+        }
+    }
+    if ($Type -eq 'DirectoryPath') {
+        $pathParameters = @{
+            Name          = $Name
+            Path          = $Value
+            BaseDirectory = $WorkspacePath
+        }
+        $Value = Resolve-ReleaseFileSystemPath @pathParameters
+        if (-not (Test-Path -LiteralPath $Value -PathType Container)) {
+            throw "Invalid release setting [$Name]. Use an existing directory."
         }
     }
     $Value
@@ -86,14 +243,15 @@ function Resolve-ReleaseConfiguration {
         Resolve validated release settings from action standards and inputs.
 
         .DESCRIPTION
-        Apply repository settings over action-metadata standards, then
+        Apply repository settings over the private schema standards, then
         nonempty named action inputs. Validate every supplied layer so invalid
         values cannot be masked. Preserve explicit false and file empty text
         values, and record the effective default-bump source.
 
         .EXAMPLE
         $parameters = @{
-            Defaults      = $actionDefaults
+            Metadata      = $settingMetadata
+            WorkspacePath = $workspace
             Configuration = @{ DefaultBump = 'major' }
             Inputs        = @{ DefaultBump = 'minor' }
         }
@@ -114,9 +272,14 @@ function Resolve-ReleaseConfiguration {
     [OutputType([PSCustomObject])]
     [CmdletBinding()]
     param(
-        # Standard settings parsed from the action's internal metadata declaration.
+        # Types and standards parsed from the action's private metadata declaration.
         [Parameter(Mandatory)]
-        [System.Collections.IDictionary] $Defaults,
+        [System.Collections.IDictionary] $Metadata,
+
+        # The known workspace for all relative WorkingDirectory values.
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $WorkspacePath,
 
         # Named runtime inputs; null and empty strings do not override file policy.
         [Parameter()]
@@ -132,27 +295,13 @@ function Resolve-ReleaseConfiguration {
     if ($null -ne $Configuration -and $Configuration -isnot [System.Collections.IDictionary]) {
         throw 'Release configuration must be a mapping of supported settings.'
     }
-    $settingNames = @(
-        'AutoCleanup'
-        'DefaultBump'
-        'CreateMajorTag'
-        'CreateMinorTag'
-        'DatePrereleaseFormat'
-        'IncrementalPrerelease'
-        'UsePRTitleAsReleaseName'
-        'UsePRBodyAsReleaseNotes'
-        'UsePRTitleAsNotesHeading'
-        'VersionPrefix'
-        'WhatIf'
-    )
-    foreach ($name in $settingNames) {
-        if ($Defaults.Keys -notcontains $name) {
-            throw "Release standard defaults are missing required setting [$name]."
-        }
+    $defaults = [ordered]@{}
+    foreach ($name in $Metadata.Keys) {
+        $defaults[$name] = $Metadata[$name].Default
     }
     $retiredSettings = @('AutoPatching', 'IgnoreLabels', 'MajorLabels', 'MinorLabels', 'PatchLabels')
     $layers = @(
-        [PSCustomObject]@{ Source = 'SharedDefault'; Values = $Defaults }
+        [PSCustomObject]@{ Source = 'SharedDefault'; Values = $defaults }
         [PSCustomObject]@{ Source = 'RepositorySetting'; Values = $Configuration }
         [PSCustomObject]@{ Source = 'ActionInput'; Values = $Inputs }
     )
@@ -166,7 +315,7 @@ function Resolve-ReleaseConfiguration {
             if ($retiredSettings -contains $name) {
                 throw "Release setting [$name] was removed. Use DefaultBump and the owned release: labels."
             }
-            if ($settingNames -notcontains $name) {
+            if ($Metadata.Keys -notcontains $name) {
                 throw "Unsupported release setting [$name]. Use the documented release settings."
             }
             $value = $layer.Values[$name]
@@ -174,7 +323,13 @@ function Resolve-ReleaseConfiguration {
             if ($layer.Source -eq 'ActionInput' -and $isEmpty) {
                 continue
             }
-            $settings[$name] = ConvertTo-ReleaseSettingValue -Name $name -Value $value
+            $valueParameters = @{
+                Name          = $name
+                Type          = $Metadata[$name].Type
+                Value         = $value
+                WorkspacePath = $WorkspacePath
+            }
+            $settings[$name] = ConvertTo-ReleaseSettingValue @valueParameters
             if ($name -eq 'DefaultBump') {
                 $defaultBumpSource = $layer.Source
             }
@@ -247,12 +402,13 @@ function Get-PrereleaseCleanupCandidate {
         Return prereleases that belong to a pull-request prerelease identifier.
 
         .DESCRIPTION
-        Select only releases marked as prereleases whose first version core is
-        followed by the exact case-sensitive prerelease identifier. The identifier
-        must end the tag or be followed by a dot; later hyphens never select it.
+        Select only releases marked as prereleases whose effective prefix is
+        followed by a valid version core and the exact case-sensitive identifier.
+        Retain releases under other historical prefixes. The identifier must
+        end the tag or be followed by a dot; later hyphens never select it.
 
         .EXAMPLE
-        Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName 'feature123'
+        Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName 'feature123' -VersionPrefix 'v'
 
         Return prereleases tagged with -feature123 or -feature123.<suffix>.
 
@@ -278,23 +434,32 @@ function Get-PrereleaseCleanupCandidate {
         # The normalized pull-request prerelease identifier.
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $PrereleaseName
+        [string] $PrereleaseName,
+
+        # The effective prefix that locates the actual version boundary.
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string] $VersionPrefix
     )
 
     $escapedPrereleaseName = [regex]::Escape($PrereleaseName)
     $identifierPattern = "\A$escapedPrereleaseName(?:\.|\z)"
-    $versionPattern = '\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-\z'
+    $versionPattern = '\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-'
 
     $Releases | Where-Object {
         if ($_.isPrerelease -ne $true) {
             return $false
         }
         $tagName = [string] $_.tagName
-        $separator = [regex]::Match($tagName, '[0-9]+\.[0-9]+\.[0-9]+-')
-        if (-not $separator.Success -or $separator.Value -cnotmatch $versionPattern) {
+        if (-not $tagName.StartsWith($VersionPrefix, [StringComparison]::Ordinal)) {
             return $false
         }
-        $identifier = $tagName.Substring($separator.Index + $separator.Length)
+        $versionTag = $tagName.Substring($VersionPrefix.Length)
+        $separator = [regex]::Match($versionTag, $versionPattern)
+        if (-not $separator.Success) {
+            return $false
+        }
+        $identifier = $versionTag.Substring($separator.Length)
         $identifier -cmatch $identifierPattern
     }
 }
@@ -576,10 +741,13 @@ function Test-PrereleaseCreation {
 
 Export-ModuleMember -Function @(
     'ConvertTo-ReleaseBump'
+    'ConvertTo-ReleaseSettingValue'
     'Get-PrereleaseCleanupCandidate'
     'Get-ReleaseLabelDefinition'
+    'Get-ReleaseSettingSchema'
     'Resolve-ReleaseDecision'
     'Resolve-ReleaseConfiguration'
+    'Resolve-ReleaseFileSystemPath'
     'Resolve-PullRequestReleaseContext'
     'Test-PrereleaseCreation'
 )

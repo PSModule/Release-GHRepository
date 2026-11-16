@@ -6,19 +6,89 @@
 param()
 
 BeforeAll {
-    Import-Module -Name powershell-yaml
-    $modulePath = Join-Path -Path $PSScriptRoot -ChildPath '../src/Release-GHRepository.Helpers.psm1'
+    Import-Module -Name powershell-yaml, PSSemVer
+    $modulePath = Join-Path -Path $PSScriptRoot -ChildPath '..\src\Release-GHRepository.Helpers.psm1'
     Import-Module -Name $modulePath -Force
     $actionPath = Join-Path -Path $PSScriptRoot -ChildPath '..\action.yml'
-    $actionDefinition = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $actionPath -Raw)
-    $standardSettings = ConvertFrom-Yaml -Yaml $actionDefinition.runs.steps[0].env.PSMODULE_AUTO_RELEASE_DEFAULT_SETTINGS -Ordered
+    $settingMetadata = Get-ReleaseSettingSchema -Path $actionPath
+    $standardSettings = @{}
+    foreach ($name in $settingMetadata.Keys) {
+        $standardSettings[$name] = $settingMetadata[$name].Default
+    }
 }
 
 Describe 'Resolve-ReleaseConfiguration' {
     BeforeAll {
         $resolveConfiguration = @{
-            Defaults = $standardSettings
+            Metadata      = $settingMetadata
+            WorkspacePath = $TestDrive
         }
+    }
+
+    It 'resolves the startup setting <Name> from repository settings' -ForEach @(
+        @{ Name = 'Debug'; Value = $true }
+        @{ Name = 'Verbose'; Value = $true }
+        @{ Name = 'Prerelease'; Value = $true }
+        @{ Name = 'Version'; Value = '[0.43.0, 1.0.0)' }
+        @{ Name = 'WorkingDirectory'; Value = 'TestDrive' }
+    ) {
+        if ($Name -eq 'WorkingDirectory') {
+            $Value = $TestDrive
+        }
+
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ $Name = $Value }
+
+        $result.$Name | Should -Be $Value
+        $result.$Name.GetType() | Should -Be $Value.GetType()
+    }
+
+    It 'retains a startup file setting when its input is <InputState>' -ForEach @(
+        @{ InputState = 'null'; InputValue = $null }
+        @{ InputState = 'empty'; InputValue = '' }
+    ) {
+        $configuration = @{
+            Debug            = $true
+            Verbose          = $true
+            Prerelease       = $true
+            Version          = '[0.43.0, 1.0.0)'
+            WorkingDirectory = $TestDrive
+        }
+        $inputs = @{}
+        foreach ($name in $configuration.Keys) {
+            $inputs[$name] = $InputValue
+        }
+
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Configuration $configuration -Inputs $inputs
+
+        foreach ($name in $configuration.Keys) {
+            $result.$name | Should -Be $configuration[$name]
+        }
+    }
+
+    It 'applies false and nonempty startup overrides even when equal to standards' {
+        $configuration = @{
+            Debug            = $true
+            Verbose          = $true
+            Prerelease       = $true
+            Version          = '[0.43.0, 1.0.0)'
+            WorkingDirectory = Join-Path -Path $TestDrive -ChildPath 'execution'
+        }
+        $null = New-Item -Path $configuration.WorkingDirectory -ItemType Directory -Force
+        $inputs = @{
+            Debug            = 'false'
+            Verbose          = $false
+            Prerelease       = 'FALSE'
+            Version          = '0.43.1'
+            WorkingDirectory = $TestDrive
+        }
+
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Configuration $configuration -Inputs $inputs
+
+        $result.Debug | Should -BeFalse
+        $result.Verbose | Should -BeFalse
+        $result.Prerelease | Should -BeFalse
+        $result.Version | Should -BeExactly '0.43.1'
+        $result.WorkingDirectory | Should -BeExactly $TestDrive
     }
 
     It 'applies every documented controller default when settings are omitted' {
@@ -35,6 +105,11 @@ Describe 'Resolve-ReleaseConfiguration' {
             UsePRTitleAsNotesHeading = $true
             VersionPrefix            = 'v'
             WhatIf                   = $false
+            Debug                    = $false
+            Verbose                  = $false
+            WorkingDirectory         = $TestDrive
+            Version                  = ''
+            Prerelease               = $false
         }
 
         $result.PSObject.Properties.Name | Should -Be (@($expected.Keys) + 'DefaultBumpSource')
@@ -107,6 +182,9 @@ Describe 'Resolve-ReleaseConfiguration' {
             'UsePRBodyAsReleaseNotes'
             'UsePRTitleAsNotesHeading'
             'WhatIf'
+            'Debug'
+            'Verbose'
+            'Prerelease'
         )
 
         foreach ($name in $names) {
@@ -261,24 +339,6 @@ Describe 'Resolve-ReleaseConfiguration' {
             Should -Throw '*Invalid DefaultBump*'
     }
 
-    It 'rejects an <SchemaCase> action standards mapping before applying valid overrides' -ForEach @(
-        @{ SchemaCase = 'unknown setting in the'; Message = '*Unsupported release setting*DefaultBunp*' }
-        @{ SchemaCase = 'incomplete'; Message = '*standard defaults*missing*WhatIf*' }
-    ) {
-        $defaults = @{}
-        foreach ($entry in $resolveConfiguration.Defaults.GetEnumerator()) {
-            $defaults[$entry.Key] = $entry.Value
-        }
-        if ($SchemaCase -eq 'incomplete') {
-            $defaults.Remove('WhatIf')
-        } else {
-            $defaults.DefaultBunp = 'minor'
-        }
-
-        { Resolve-ReleaseConfiguration -Defaults $defaults -Inputs @{ DefaultBump = 'patch'; WhatIf = $true } } |
-            Should -Throw $Message
-    }
-
     It 'rejects null and non-string text settings instead of coercing them' -ForEach @(
         @{ Name = 'VersionPrefix'; Value = $null }
         @{ Name = 'VersionPrefix'; Value = 1 }
@@ -389,13 +449,53 @@ Describe 'Get-PrereleaseCleanupCandidate' {
     }
 
     It 'returns only prereleases with the exact numeric identifier segment' {
-        $result = @(Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName '123')
+        $result = @(Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName '123' -VersionPrefix 'v')
 
         $result.tagName | Should -Be @('v1.2.3-123.1', 'v1.2.3-123')
     }
 
+    It 'uses the actual version boundary for <PrefixCase>' -ForEach @(
+        @{
+            PrefixCase    = 'an own-branch release after version-like prefix text'
+            Prefix        = 'release-1.2.3-'
+            Branch        = 'feature'
+            ExpectedTag   = 'release-1.2.3-2.0.4-feature.1'
+            ExpectedCount = 1
+        }
+        @{
+            PrefixCase    = 'another branch after identifier-like prefix text'
+            Prefix        = 'release-1.2.3-feature.extra-'
+            Branch        = 'other'
+            ExpectedTag   = 'release-1.2.3-feature.extra-2.0.4-other.1'
+            ExpectedCount = 0
+        }
+    ) {
+        $parameters = @{
+            Metadata      = $settingMetadata
+            WorkspacePath = $TestDrive
+            Configuration = @{ VersionPrefix = $Prefix }
+        }
+        $settings = Resolve-ReleaseConfiguration @parameters
+        $version = New-PSSemVer -Version '2.0.4'
+        $version.Prefix = $settings.VersionPrefix
+        $version.Prerelease = $Branch
+        $version.BumpPrereleaseNumber()
+        $tagName = $version.ToString()
+        $tagName | Should -BeExactly $ExpectedTag
+        $records = @([PSCustomObject]@{ tagName = $tagName; isPrerelease = $true })
+
+        $result = @(
+            Get-PrereleaseCleanupCandidate -Releases $records -PrereleaseName 'feature' -VersionPrefix $settings.VersionPrefix
+        )
+
+        $result.Count | Should -Be $ExpectedCount
+        if ($ExpectedCount -eq 1) {
+            $result[0].tagName | Should -BeExactly $ExpectedTag
+        }
+    }
+
     It 'never returns stable releases whose versions overlap the identifier' {
-        $result = @(Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName '123')
+        $result = @(Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName '123' -VersionPrefix 'v')
 
         $result | Where-Object { -not $_.isPrerelease } | Should -BeNullOrEmpty
         $result.tagName | Should -Not -Contain 'v1.2.3'
@@ -404,7 +504,7 @@ Describe 'Get-PrereleaseCleanupCandidate' {
     }
 
     It 'does not match a longer or later prerelease identifier segment' {
-        $result = @(Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName '123')
+        $result = @(Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName '123' -VersionPrefix 'v')
 
         $result.tagName | Should -Not -Contain 'v1.2.3-1234.1'
         $result.tagName | Should -Not -Contain 'v1.2.3-other.123.1'
@@ -423,7 +523,7 @@ Describe 'Get-PrereleaseCleanupCandidate' {
         )
 
         $result = @(
-            Get-PrereleaseCleanupCandidate -Releases $regexReleases -PrereleaseName 'feature.test'
+            Get-PrereleaseCleanupCandidate -Releases $regexReleases -PrereleaseName 'feature.test' -VersionPrefix 'v'
         )
 
         $result.tagName | Should -Be @('v1.2.3-feature.test.1')
@@ -438,7 +538,7 @@ Describe 'Get-PrereleaseCleanupCandidate' {
         )
         $records = @($tagNames | ForEach-Object { [PSCustomObject]@{ tagName = $_; isPrerelease = $true } })
 
-        $result = @(Get-PrereleaseCleanupCandidate -Releases $records -PrereleaseName 'feature')
+        $result = @(Get-PrereleaseCleanupCandidate -Releases $records -PrereleaseName 'feature' -VersionPrefix 'v')
 
         $result.tagName | Should -Be @('v1.2.3-feature.1')
     }
@@ -449,7 +549,7 @@ Describe 'Get-PrereleaseCleanupCandidate' {
             [PSCustomObject]@{ tagName = 'v1.2.3-feature.1'; isPrerelease = $true }
         )
 
-        $result = @(Get-PrereleaseCleanupCandidate -Releases $records -PrereleaseName 'Feature')
+        $result = @(Get-PrereleaseCleanupCandidate -Releases $records -PrereleaseName 'Feature' -VersionPrefix 'v')
 
         $result.tagName | Should -Be @('v1.2.3-Feature.1')
     }
@@ -460,23 +560,37 @@ Describe 'Get-PrereleaseCleanupCandidate' {
             [PSCustomObject]@{ tagName = 'v01.2.3-feature.1'; isPrerelease = $true }
         )
 
-        @(Get-PrereleaseCleanupCandidate -Releases $records -PrereleaseName 'feature') |
+        @(Get-PrereleaseCleanupCandidate -Releases $records -PrereleaseName 'feature' -VersionPrefix 'v') |
             Should -BeNullOrEmpty
     }
 
-    It 'retains cleanup across empty and hyphenated version prefixes' {
+    It 'retains cleanup with the effective <PrefixCase> prefix' -ForEach @(
+        @{ PrefixCase = 'empty'; Prefix = ''; ExpectedTag = '1.2.3-feature.1' }
+        @{ PrefixCase = 'hyphenated'; Prefix = 'release-v'; ExpectedTag = 'release-v1.2.3-feature.2' }
+    ) {
         $records = @(
             [PSCustomObject]@{ tagName = '1.2.3-feature.1'; isPrerelease = $true }
             [PSCustomObject]@{ tagName = 'release-v1.2.3-feature.2'; isPrerelease = $true }
         )
 
-        $result = @(Get-PrereleaseCleanupCandidate -Releases $records -PrereleaseName 'feature')
+        $result = @(Get-PrereleaseCleanupCandidate -Releases $records -PrereleaseName 'feature' -VersionPrefix $Prefix)
 
-        $result.tagName | Should -Be @('1.2.3-feature.1', 'release-v1.2.3-feature.2')
+        $result.tagName | Should -Be @($ExpectedTag)
+    }
+
+    It 'retains releases under historical prefixes rather than guessing their version boundary' {
+        $records = @(
+            [PSCustomObject]@{ tagName = 'v1.2.3-feature.1'; isPrerelease = $true }
+            [PSCustomObject]@{ tagName = 'release-1.2.3-2.0.4-feature.1'; isPrerelease = $true }
+        )
+
+        $result = @(Get-PrereleaseCleanupCandidate -Releases $records -PrereleaseName 'feature' -VersionPrefix 'release-1.2.3-')
+
+        $result.tagName | Should -Be @('release-1.2.3-2.0.4-feature.1')
     }
 
     It 'returns no candidates for an empty release list' {
-        $result = @(Get-PrereleaseCleanupCandidate -Releases @() -PrereleaseName 'feature')
+        $result = @(Get-PrereleaseCleanupCandidate -Releases @() -PrereleaseName 'feature' -VersionPrefix 'v')
 
         $result | Should -BeNullOrEmpty
     }

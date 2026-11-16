@@ -6,15 +6,21 @@
     Justification = 'Parameter is used in dynamic parameter validation.'
 )]
 [CmdletBinding()]
-param()
+param(
+    # The release policy resolved by the bootstrap before GitHub-Script starts.
+    [Parameter(Mandatory)]
+    [ValidateNotNull()]
+    [PSCustomObject] $Settings
+)
 
 $ErrorActionPreference = 'Stop'
+$releaseSettings = $Settings
 
 $helperModulePath = Join-Path -Path $PSScriptRoot -ChildPath 'Release-GHRepository.Helpers.psm1'
 Import-Module -Name $helperModulePath -Force
 
 LogGroup 'Loading libraries' {
-    'powershell-yaml', 'PSSemVer' | ForEach-Object {
+    'PSSemVer' | ForEach-Object {
         $name = $_
         Write-Output "Installing module: $name"
         $count = 5
@@ -37,58 +43,18 @@ LogGroup 'Loading libraries' {
 }
 
 LogGroup 'Set configuration' {
-    $actionDefinitionPath = Join-Path -Path $PSScriptRoot -ChildPath '..\action.yml'
-    $actionDefinition = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $actionDefinitionPath -Raw)
-    $standardSettingsYaml = $actionDefinition.runs.steps[0].env.PSMODULE_AUTO_RELEASE_DEFAULT_SETTINGS
-    if ($standardSettingsYaml -isnot [string] -or [string]::IsNullOrWhiteSpace($standardSettingsYaml)) {
-        throw 'The action release standards must be a nonempty YAML mapping.'
-    }
-    Write-Output "Reading action release standards [$actionDefinitionPath]"
-    $actionDefaults = ConvertFrom-Yaml -Yaml $standardSettingsYaml -Ordered
-    if ($actionDefaults -isnot [System.Collections.IDictionary]) {
-        throw 'The action release standards must be a mapping of supported settings.'
-    }
-    $actionInputs = @{}
-    foreach ($name in $actionDefaults.Keys) {
-        $actionInputs[$name] = [Environment]::GetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$name")
-    }
-
-    $settingsFilePath = [Environment]::GetEnvironmentVariable('PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath')
-    if ($null -eq $settingsFilePath) {
-        $settingsFilePath = $actionDefinition.inputs.SettingsFilePath.default
-    }
-    if ([string]::IsNullOrWhiteSpace($settingsFilePath)) {
-        throw 'SettingsFilePath must be a nonempty path.'
-    }
-    $configuration = @{}
-    if (-not (Test-Path -LiteralPath $settingsFilePath -PathType Leaf)) {
-        Write-Output "Settings file not found at [$settingsFilePath]"
-    } else {
-        Write-Output "Reading settings file [$settingsFilePath]"
-        $configuration = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $settingsFilePath -Raw)
-        if ($null -eq $configuration) {
-            throw "Release settings file [$settingsFilePath] must be a mapping of supported settings."
-        }
-    }
-
-    $configurationParameters = @{
-        Defaults      = $actionDefaults
-        Inputs        = $actionInputs
-        Configuration = $configuration
-    }
-    $settings = Resolve-ReleaseConfiguration @configurationParameters
-    $autoCleanup = $settings.AutoCleanup
-    $defaultBump = $settings.DefaultBump
-    $defaultBumpSource = $settings.DefaultBumpSource
-    $createMajorTag = $settings.CreateMajorTag
-    $createMinorTag = $settings.CreateMinorTag
-    $datePrereleaseFormat = $settings.DatePrereleaseFormat
-    $incrementalPrerelease = $settings.IncrementalPrerelease
-    $usePRBodyAsReleaseNotes = $settings.UsePRBodyAsReleaseNotes
-    $usePRTitleAsReleaseName = $settings.UsePRTitleAsReleaseName
-    $usePRTitleAsNotesHeading = $settings.UsePRTitleAsNotesHeading
-    $versionPrefix = $settings.VersionPrefix
-    $whatIf = $settings.WhatIf
+    $autoCleanup = $releaseSettings.AutoCleanup
+    $defaultBump = $releaseSettings.DefaultBump
+    $defaultBumpSource = $releaseSettings.DefaultBumpSource
+    $createMajorTag = $releaseSettings.CreateMajorTag
+    $createMinorTag = $releaseSettings.CreateMinorTag
+    $datePrereleaseFormat = $releaseSettings.DatePrereleaseFormat
+    $incrementalPrerelease = $releaseSettings.IncrementalPrerelease
+    $usePRBodyAsReleaseNotes = $releaseSettings.UsePRBodyAsReleaseNotes
+    $usePRTitleAsReleaseName = $releaseSettings.UsePRTitleAsReleaseName
+    $usePRTitleAsNotesHeading = $releaseSettings.UsePRTitleAsNotesHeading
+    $versionPrefix = $releaseSettings.VersionPrefix
+    $whatIf = $releaseSettings.WhatIf
 
     Write-Output '-------------------------------------------------'
     Write-Output "Auto cleanup enabled:           [$autoCleanup]"
@@ -436,7 +402,7 @@ LogGroup 'List prereleases using the same name' {
         Write-Output 'This branch has no prerelease identifier; cleanup has no candidates.'
     } else {
         $prereleasesToCleanup = @(
-            Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName $prereleaseName
+            Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName $prereleaseName -VersionPrefix $versionPrefix
         )
     }
     $prereleasesToCleanup | Select-Object -Property name, publishedAt, isPrerelease, isLatest | Format-Table | Out-String
