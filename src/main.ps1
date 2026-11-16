@@ -96,44 +96,17 @@ LogGroup 'Event information - JSON' {
 
 LogGroup 'Event information - Object' {
     $githubEvent = $githubEventJson | ConvertFrom-Json
-    $workflowRun = $githubEvent.workflow_run
-    $commitPullRequests = @()
-    if ($workflowRun) {
-        if ($env:GITHUB_EVENT_NAME -ne 'workflow_run' -or
-            $workflowRun.event -ne 'pull_request' -or $workflowRun.conclusion -ne 'success' -or
-            $workflowRun.head_sha -cnotmatch '^[a-f0-9]{40}$') {
-            throw 'Publication requires a successful pull_request workflow_run with a valid commit SHA.'
-        }
-        $associatedPullRequests = @($workflowRun.pull_requests)
-        if ($associatedPullRequests.Count -eq 0) {
-            Write-Output 'Resolving the checked commit through the pull request association API.'
-            $associationJson = gh api "repos/$env:GITHUB_REPOSITORY/commits/$($workflowRun.head_sha)/pulls"
-            if ($LASTEXITCODE -ne 0) {
-                throw 'Failed to find pull requests associated with the checked commit.'
-            }
-            $commitPullRequests = @($associationJson | ConvertFrom-Json)
-            $associatedPullRequests = $commitPullRequests
-        }
-        if ($associatedPullRequests.Count -ne 1 -or $associatedPullRequests[0].number -lt 1) {
-            throw 'Publication requires exactly one associated pull request.'
-        }
-        $pullRequestNumber = $associatedPullRequests[0].number
-        $pullRequestJson = gh api "repos/$env:GITHUB_REPOSITORY/pulls/$pullRequestNumber"
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to read pull request [$pullRequestNumber]."
-        }
-        $pull_request = $pullRequestJson | ConvertFrom-Json
-        if (-not $pull_request.merged -and $pull_request.head.repo.full_name -ne $env:GITHUB_REPOSITORY) {
-            Write-GitHubWarning 'Fork PR prereleases are not published. Publication runs after the PR is merged.'
-            exit
-        }
-    } elseif ($githubEvent.pull_request) {
-        $pull_request = $githubEvent.pull_request
-    } else {
+    if (-not $githubEvent.pull_request) {
         Write-GitHubWarning 'This is not run for a pull request. Exiting.'
         exit
     }
+    $pull_request = $githubEvent.pull_request
     $githubEvent | Format-List | Out-String
+}
+
+if (-not $whatIf -and $pull_request.head.repo.full_name -ne $env:GITHUB_REPOSITORY) {
+    Write-GitHubWarning 'Fork PR publication is skipped because regular fork PR tokens are read-only.'
+    return
 }
 
 $repositoryJson = gh repo view $env:GITHUB_REPOSITORY --json defaultBranchRef
@@ -141,13 +114,17 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Failed to read the repository default branch.'
 }
 $defaultBranchName = ($repositoryJson | ConvertFrom-Json).defaultBranchRef.name
-if ($workflowRun) {
+if (-not $whatIf) {
+    $pullRequestNumber = $pull_request.number
+    $currentPullRequestJson = gh api "repos/$env:GITHUB_REPOSITORY/pulls/$pullRequestNumber"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to read pull request [$pullRequestNumber]."
+    }
     $validationParameters = @{
         PullRequest        = $pull_request
-        WorkflowRun        = $workflowRun
+        CurrentPullRequest = $currentPullRequestJson | ConvertFrom-Json
         Repository         = $env:GITHUB_REPOSITORY
         DefaultBranch      = $defaultBranchName
-        CommitPullRequests = $commitPullRequests
     }
     Assert-ReleasePullRequest @validationParameters
 }

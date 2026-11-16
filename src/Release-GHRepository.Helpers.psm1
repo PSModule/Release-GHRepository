@@ -85,11 +85,11 @@ function Assert-ReleasePullRequest {
         Validate PR metadata before privileged publication.
 
         .DESCRIPTION
-        Require successful PR checks from this repository and the default branch.
-        Bind the live PR to the checked commit and reject stale or ambiguous metadata.
+        Require a same-repository PR targeting the default branch.
+        Compare the event with live PR metadata before publishing its immutable commit.
 
         .EXAMPLE
-        Assert-ReleasePullRequest -PullRequest $pr -WorkflowRun $run -Repository 'owner/repo' -DefaultBranch 'main'
+        Assert-ReleasePullRequest -PullRequest $eventPr -CurrentPullRequest $livePr -Repository 'owner/repo' -DefaultBranch 'main'
 
         .INPUTS
         None
@@ -104,15 +104,15 @@ function Assert-ReleasePullRequest {
     [OutputType([void])]
     [CmdletBinding()]
     param(
-        # The live PR returned by the repository API.
+        # The PR metadata from the pull_request event.
         [Parameter(Mandatory)]
         [ValidateNotNull()]
         [pscustomobject] $PullRequest,
 
-        # The workflow_run event's run metadata.
+        # The current PR returned by the repository API.
         [Parameter(Mandatory)]
         [ValidateNotNull()]
-        [pscustomobject] $WorkflowRun,
+        [pscustomobject] $CurrentPullRequest,
 
         # The repository that owns the publishing workflow.
         [Parameter(Mandatory)]
@@ -122,34 +122,19 @@ function Assert-ReleasePullRequest {
         # The repository's default branch.
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $DefaultBranch,
-
-        # API associations for runs whose PR list is empty, including merged PRs.
-        [Parameter()]
-        [pscustomobject[]] $CommitPullRequests = @()
+        [string] $DefaultBranch
     )
 
-    if ($WorkflowRun.event -ne 'pull_request' -or $WorkflowRun.conclusion -ne 'success') {
-        throw 'Publication requires a successful pull_request check run.'
-    }
-    if ($WorkflowRun.repository.full_name -ne $Repository -or $PullRequest.base.repo.full_name -ne $Repository -or
-        $WorkflowRun.head_repository.full_name -notin @($Repository, $PullRequest.head.repo.full_name)) {
+    if ($PullRequest.base.repo.full_name -ne $Repository -or $CurrentPullRequest.base.repo.full_name -ne $Repository) {
         throw "Publication metadata does not belong to repository [$Repository]."
     }
-
-    $associatedPullRequests = @($WorkflowRun.pull_requests)
-    if ($associatedPullRequests.Count -eq 0) {
-        $associatedPullRequests = @($CommitPullRequests)
+    if ($PullRequest.head.repo.full_name -ne $Repository -or $CurrentPullRequest.head.repo.full_name -ne $Repository) {
+        throw 'Publication requires a same-repository pull request. Fork tokens are read-only.'
     }
-    if ($associatedPullRequests.Count -ne 1) {
-        throw 'Publication requires exactly one associated pull request.'
+    if ($PullRequest.number -lt 1 -or $CurrentPullRequest.number -ne $PullRequest.number) {
+        throw 'Publication metadata does not match the pull request.'
     }
-    $associatedPullRequest = $associatedPullRequests[0]
-    if ($associatedPullRequest.number -ne $PullRequest.number -or $PullRequest.number -lt 1 -or
-        $associatedPullRequest.base.repo.id -ne $PullRequest.base.repo.id) {
-        throw 'Publication metadata does not match the associated pull request.'
-    }
-    if ($PullRequest.base.ref -ne $DefaultBranch -or $associatedPullRequest.base.ref -ne $DefaultBranch) {
+    if ($PullRequest.base.ref -ne $DefaultBranch) {
         throw "Publication requires a pull request targeting the default branch [$DefaultBranch]."
     }
     if (-not $PullRequest.merged -and $PullRequest.head.repo.full_name -ne $Repository) {
@@ -159,31 +144,23 @@ function Assert-ReleasePullRequest {
         ($PullRequest.merged -and $PullRequest.merge_commit_sha -cnotmatch '^[a-f0-9]{40}$')) {
         throw 'Publication requires a valid commit SHA.'
     }
-    if ($associatedPullRequest.head.sha -cne $PullRequest.head.sha) {
-        throw 'The pull request changed since its checks. Run checks on the latest commit.'
-    }
-    if ($WorkflowRun.head_sha -cne $PullRequest.head.sha -and
-        (-not $PullRequest.merged -or $WorkflowRun.head_sha -cne $PullRequest.merge_commit_sha)) {
-        throw 'The check run does not identify the PR head or merge commit.'
-    }
-    if ($PullRequest.state -eq 'closed') {
-        if ([string]::IsNullOrWhiteSpace($WorkflowRun.created_at) -or [string]::IsNullOrWhiteSpace($PullRequest.closed_at)) {
-            throw 'Closed-PR publication requires the check and closure timestamps.'
-        }
-        if ([datetimeoffset] $WorkflowRun.created_at -lt [datetimeoffset] $PullRequest.closed_at) {
-            throw 'The check run predates PR closure. Wait for the closed-PR checks.'
-        }
+    if ($CurrentPullRequest.head.sha -cne $PullRequest.head.sha -or
+        $CurrentPullRequest.base.ref -ne $PullRequest.base.ref -or
+        $CurrentPullRequest.state -ne $PullRequest.state -or
+        $CurrentPullRequest.merged -ne $PullRequest.merged -or
+        ($PullRequest.merged -and $CurrentPullRequest.merge_commit_sha -cne $PullRequest.merge_commit_sha)) {
+        throw 'The pull request changed since this event. Run publication for the current PR state.'
     }
 }
 
 function Test-ReleasePreview {
     <#
         .SYNOPSIS
-        Select preview mode without allowing configuration to enable PR writes.
+        Select preview mode without allowing configuration to override the caller.
 
         .DESCRIPTION
-        Force previews for regular PR events or an explicit preview request.
-        Permit writes only in a workflow_run publisher that has passed metadata validation.
+        Honor an explicit preview request or configuration setting.
+        Permit publication only for regular pull_request events.
 
         .EXAMPLE
         Test-ReleasePreview -EventName 'pull_request' -Configured
@@ -215,12 +192,12 @@ function Test-ReleasePreview {
         [switch] $Configured
     )
 
-    if ($Requested -or $Configured -or $EventName -eq 'pull_request') {
+    if ($Requested -or $Configured) {
         $true
-    } elseif ($EventName -eq 'workflow_run') {
+    } elseif ($EventName -eq 'pull_request') {
         $false
     } else {
-        throw 'Write operations require a trusted workflow_run publisher. Use WhatIf for other events.'
+        throw 'Write operations require a regular pull_request event. Use WhatIf for other events.'
     }
 }
 

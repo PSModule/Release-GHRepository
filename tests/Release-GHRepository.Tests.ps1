@@ -119,107 +119,64 @@ Describe 'Pull request publication trust boundary' {
                 repo = [pscustomobject] @{ id = 123; full_name = $repository }
             }
         }
-        $workflowRun = [pscustomobject] @{
-            event           = 'pull_request'
-            conclusion      = 'success'
-            created_at      = '2026-11-16T12:00:01Z'
-            head_sha        = $headSha
-            repository      = [pscustomobject] @{ id = 123; full_name = $repository }
-            head_repository = [pscustomobject] @{ id = 123; full_name = $repository }
-            pull_requests   = @(
-                [pscustomobject] @{
-                    number = 7
-                    head   = [pscustomobject] @{ sha = $headSha }
-                    base   = [pscustomobject] @{ ref = 'main'; repo = [pscustomobject] @{ id = 123 } }
-                }
-            )
-        }
+        $currentPullRequest = $pullRequest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
         $validationParameters = @{
-            PullRequest   = $pullRequest
-            WorkflowRun   = $workflowRun
-            Repository    = $repository
-            DefaultBranch = 'main'
+            PullRequest        = $pullRequest
+            CurrentPullRequest = $currentPullRequest
+            Repository         = $repository
+            DefaultBranch      = 'main'
         }
     }
 
-    It 'accepts an open PR at the checked commit' {
+    It 'accepts an open same-repository PR at the event commit' {
         { Assert-ReleasePullRequest @validationParameters } | Should -Not -Throw
     }
 
-    It 'accepts a merged PR whose merge commit was checked' {
+    It 'accepts a merged same-repository PR at the event merge commit' {
         $pullRequest.state = 'closed'
         $pullRequest.merged = $true
-        $pullRequest.closed_at = '2026-11-16T12:00:00Z'
         $pullRequest.merge_commit_sha = $mergeSha
-        $workflowRun.head_sha = $mergeSha
-
-        { Assert-ReleasePullRequest @validationParameters } | Should -Not -Throw
-    }
-
-    It 'resolves a merged PR from its commit API association when the run PR list is empty' {
-        $pullRequest.state = 'closed'
-        $pullRequest.merged = $true
-        $pullRequest.closed_at = '2026-11-16T12:00:00Z'
-        $pullRequest.merge_commit_sha = $mergeSha
-        $validationParameters.CommitPullRequests = @($pullRequest)
-        $workflowRun.pull_requests = @()
-
-        { Assert-ReleasePullRequest @validationParameters } | Should -Not -Throw
-    }
-
-    It 'accepts a merged fork PR without running its code' {
-        $pullRequest.state = 'closed'
-        $pullRequest.merged = $true
-        $pullRequest.closed_at = '2026-11-16T12:00:00Z'
-        $pullRequest.merge_commit_sha = $mergeSha
-        $pullRequest.head.repo.full_name = 'contributor/fork'
-        $workflowRun.head_repository.full_name = 'contributor/fork'
+        $currentPullRequest.state = 'closed'
+        $currentPullRequest.merged = $true
+        $currentPullRequest.merge_commit_sha = $mergeSha
 
         { Assert-ReleasePullRequest @validationParameters } | Should -Not -Throw
     }
 
     It 'rejects <Name>' -ForEach @(
         @{
-            Name    = 'failed checks'
-            Change  = { $workflowRun.conclusion = 'failure' }
-            Message = '*successful pull_request*'
+            Name    = 'an event for another repository'
+            Change  = { $pullRequest.base.repo.full_name = 'other/repository' }
+            Message = '*repository*'
         }
         @{
-            Name    = 'a non-PR workflow run'
-            Change  = { $workflowRun.event = 'push' }
-            Message = '*successful pull_request*'
-        }
-        @{
-            Name    = 'checks from another repository'
-            Change  = { $workflowRun.repository.full_name = 'other/repository' }
+            Name    = 'live metadata from another repository'
+            Change  = { $currentPullRequest.base.repo.full_name = 'other/repository' }
             Message = '*repository*'
         }
         @{
             Name    = 'an open fork PR'
+            Change  = { $pullRequest.head.repo.full_name = 'contributor/fork' }
+            Message = '*same-repository*'
+        }
+        @{
+            Name    = 'a merged fork PR'
             Change  = {
+                $pullRequest.state = 'closed'
+                $pullRequest.merged = $true
+                $pullRequest.merge_commit_sha = $mergeSha
                 $pullRequest.head.repo.full_name = 'contributor/fork'
-                $workflowRun.head_repository.full_name = 'contributor/fork'
             }
-            Message = '*branch in this repository*'
-        }
-        @{
-            Name    = 'an unassociated PR'
-            Change  = { $workflowRun.pull_requests = @() }
-            Message = '*one associated pull request*'
-        }
-        @{
-            Name    = 'an ambiguous PR association'
-            Change  = { $workflowRun.pull_requests += $workflowRun.pull_requests[0] }
-            Message = '*one associated pull request*'
+            Message = '*same-repository*'
         }
         @{
             Name    = 'a different PR number'
-            Change  = { $workflowRun.pull_requests[0].number = 8 }
-            Message = '*associated pull request*'
+            Change  = { $currentPullRequest.number = 8 }
+            Message = '*pull request*'
         }
         @{
-            Name    = 'a PR changed since its checks'
-            Change  = { $pullRequest.head.sha = '3333333333333333333333333333333333333333' }
+            Name    = 'a PR changed since the event'
+            Change  = { $currentPullRequest.head.sha = '3333333333333333333333333333333333333333' }
             Message = '*changed since*'
         }
         @{
@@ -229,22 +186,25 @@ Describe 'Pull request publication trust boundary' {
         }
         @{
             Name    = 'an invalid publication commit'
-            Change  = {
-                $pullRequest.head.sha = '--unexpected-option'
-                $workflowRun.head_sha = '--unexpected-option'
-                $workflowRun.pull_requests[0].head.sha = '--unexpected-option'
-            }
+            Change  = { $pullRequest.head.sha = '--unexpected-option' }
             Message = '*commit SHA*'
         }
         @{
-            Name    = 'a pre-merge run completing after closure'
+            Name    = 'an old open-PR event after closure'
+            Change  = { $currentPullRequest.state = 'closed' }
+            Message = '*changed since*'
+        }
+        @{
+            Name    = 'a different merge commit'
             Change  = {
                 $pullRequest.state = 'closed'
                 $pullRequest.merged = $true
-                $pullRequest.closed_at = '2026-11-16T12:00:02Z'
                 $pullRequest.merge_commit_sha = $mergeSha
+                $currentPullRequest.state = 'closed'
+                $currentPullRequest.merged = $true
+                $currentPullRequest.merge_commit_sha = '3333333333333333333333333333333333333333'
             }
-            Message = '*predates PR closure*'
+            Message = '*changed since*'
         }
     ) {
         . $Change
@@ -276,25 +236,25 @@ Describe 'Prerelease cleanup ownership' {
     }
 }
 
-Describe 'Read-only pull request checks' {
-    It 'does not let configuration enable writes during pull_request checks' {
-        Test-ReleasePreview -EventName 'pull_request' | Should -BeTrue
+Describe 'Pull request preview controls' {
+    It 'allows regular pull_request publication when no preview is requested' {
+        Test-ReleasePreview -EventName 'pull_request' | Should -BeFalse
     }
 
     It 'does not let configuration disable an explicit preview request' {
-        Test-ReleasePreview -EventName 'workflow_run' -Requested | Should -BeTrue
+        Test-ReleasePreview -EventName 'pull_request' -Requested | Should -BeTrue
     }
 
-    It 'honors a configured preview in the trusted publisher' {
-        Test-ReleasePreview -EventName 'workflow_run' -Configured | Should -BeTrue
+    It 'honors a configured preview' {
+        Test-ReleasePreview -EventName 'pull_request' -Configured | Should -BeTrue
     }
 
-    It 'permits publication only in the trusted publisher' {
-        Test-ReleasePreview -EventName 'workflow_run' | Should -BeFalse
+    It 'allows read-only scheduled checks' {
+        Test-ReleasePreview -EventName 'schedule' -Requested | Should -BeTrue
     }
 
     It 'rejects publication on other events' {
-        { Test-ReleasePreview -EventName 'workflow_dispatch' } | Should -Throw -ExpectedMessage '*workflow_run*'
+        { Test-ReleasePreview -EventName 'push' } | Should -Throw -ExpectedMessage '*pull_request*'
     }
 }
 

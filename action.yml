@@ -67,7 +67,7 @@ inputs:
     required: false
     default: v
   WhatIf:
-    description: Simulate release and tag changes. Always enabled for pull_request checks. A true input cannot be disabled by the configuration file.
+    description: Simulate release and tag changes. A true input cannot be disabled by the configuration file.
     required: false
     default: 'false'
   Debug:
