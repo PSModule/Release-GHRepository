@@ -94,7 +94,7 @@ on:
       - labeled
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.base.ref }}
 
 jobs:
   Release-GHRepository:
