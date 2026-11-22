@@ -365,7 +365,18 @@ if ($createPrerelease -or $createRelease -or $whatIf) {
 }
 
 LogGroup 'List prereleases using the same name' {
-    $prereleasesToCleanup = $releases | Where-Object { $_.tagName -like "*$prereleaseName*" }
+    $prereleasesToCleanup = @()
+    if ([string]::IsNullOrEmpty($prereleaseName)) {
+        Write-Warning "Skipping prerelease cleanup: branch [$prHeadRef] has no alphanumeric prerelease name."
+    } else {
+        # Match the first SemVer prerelease identifier, not a substring of the tag.
+        $escapedVersionPrefix = [regex]::Escape($versionPrefix)
+        $escapedPrereleaseName = [regex]::Escape($prereleaseName)
+        $prereleaseTagPattern = "^${escapedVersionPrefix}[0-9]+\.[0-9]+\.[0-9]+-${escapedPrereleaseName}(?:\.|$)"
+        $prereleasesToCleanup = $releases | Where-Object {
+            $_.isPrerelease -eq $true -and $_.tagName -cmatch $prereleaseTagPattern
+        }
+    }
     $prereleasesToCleanup | Select-Object -Property name, publishedAt, isPrerelease, isLatest | Format-Table | Out-String
 }
 
