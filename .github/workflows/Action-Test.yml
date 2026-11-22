@@ -5,6 +5,12 @@ run-name: "Action-Test - [${{ github.event.pull_request.title }} #${{ github.eve
 on:
   workflow_dispatch:
   pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
   schedule:
     - cron: '0 0 * * *'
 
@@ -12,14 +18,35 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-  pull-requests: read
+permissions: {}
 
 jobs:
+  UnitTest:
+    name: Pester 6.1
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Test release decisions
+        uses: PSModule/Invoke-Pester@4ff33199141fdf22568990b6107fe3148ae93a1c # v5.1.0
+        with:
+          Path: tests
+          Version: 6.1.0
+          Prescript: |
+            Install-PSResource -Name powershell-yaml -Version '[0.4.12]' -TrustRepository -Repository PSGallery
+            Install-PSResource -Name PSSemVer -Version '[1.1.10]' -TrustRepository -Repository PSGallery
+
   ActionTestDefault:
     name: Action-Test - [Default]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Checkout repo
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -30,3 +57,60 @@ jobs:
         uses: ./
         with:
           WhatIf: true
+
+      - name: Prepare caller settings
+        id: caller-settings
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $settingsFilePath = Join-Path -Path $env:RUNNER_TEMP -ChildPath 'release-caller.settings.yml'
+          @'
+          DefaultBump: major
+          AutoCleanup: true
+          CreateMajorTag: false
+          DatePrereleaseFormat: yyyyMMdd
+          VersionPrefix: v
+          WhatIf: false
+          Debug: true
+          Verbose: true
+          WorkingDirectory: .github
+          Version: '[0.43.1]'
+          Prerelease: true
+          '@ | Set-Content -LiteralPath $settingsFilePath
+          "path=$settingsFilePath" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+
+      - name: Action-Test - Repository policy
+        uses: ./
+        with:
+          SettingsFilePath: ${{ steps.caller-settings.outputs.path }}
+          AutoCleanup: false
+          DatePrereleaseFormat: ''
+          VersionPrefix: ''
+          Debug: ''
+          Verbose: ''
+          WorkingDirectory: ''
+          Version: ''
+          Prerelease: ''
+          WhatIf: true
+
+      - name: Action-Test - Explicit standard-value override
+        uses: ./
+        with:
+          SettingsFilePath: ${{ steps.caller-settings.outputs.path }}
+          DefaultBump: patch
+          AutoCleanup: false
+          DatePrereleaseFormat: ''
+          VersionPrefix: ''
+          Debug: false
+          Verbose: false
+          WorkingDirectory: ${{ github.workspace }}
+          Version: '[0.43.1]'
+          Prerelease: false
+          WhatIf: true
+
+      - name: Remove caller settings
+        if: ${{ always() && steps.caller-settings.outputs.path != '' }}
+        shell: pwsh
+        env:
+          CALLER_SETTINGS_PATH: ${{ steps.caller-settings.outputs.path }}
+        run: Remove-Item -LiteralPath $env:CALLER_SETTINGS_PATH -ErrorAction Stop

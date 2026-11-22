@@ -6,10 +6,21 @@
     Justification = 'Parameter is used in dynamic parameter validation.'
 )]
 [CmdletBinding()]
-param()
+param(
+    # The release policy resolved by the bootstrap before GitHub-Script starts.
+    [Parameter(Mandatory)]
+    [ValidateNotNull()]
+    [PSCustomObject] $Settings
+)
+
+$ErrorActionPreference = 'Stop'
+$releaseSettings = $Settings
+
+$helperModulePath = Join-Path -Path $PSScriptRoot -ChildPath 'Release-GHRepository.Helpers.psm1'
+Import-Module -Name $helperModulePath -Force
 
 LogGroup 'Loading libraries' {
-    'powershell-yaml', 'PSSemVer' | ForEach-Object {
+    'PSSemVer' | ForEach-Object {
         $name = $_
         Write-Output "Installing module: $name"
         $count = 5
@@ -32,33 +43,23 @@ LogGroup 'Loading libraries' {
 }
 
 LogGroup 'Set configuration' {
-    if (-not (Test-Path -Path $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile -PathType Leaf)) {
-        Write-Output "Configuration file not found at [$env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile]"
-    } else {
-        Write-Output "Reading from configuration file [$env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile]"
-        $configuration = ConvertFrom-Yaml -Yaml (Get-Content $env:PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile -Raw)
-    }
-
-    $autoCleanup = ![string]::IsNullOrEmpty($configuration.AutoCleanup) ? $configuration.AutoCleanup -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup -eq 'true'
-    $autoPatching = ![string]::IsNullOrEmpty($configuration.AutoPatching) ? $configuration.AutoPatching -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_AutoPatching -eq 'true'
-    $createMajorTag = ![string]::IsNullOrEmpty($configuration.CreateMajorTag) ? $configuration.CreateMajorTag -EQ 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_CreateMajorTag -EQ 'true'
-    $createMinorTag = ![string]::IsNullOrEmpty($configuration.CreateMinorTag) ? $configuration.CreateMinorTag -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_CreateMinorTag -eq 'true'
-    $datePrereleaseFormat = ![string]::IsNullOrEmpty($configuration.DatePrereleaseFormat) ? $configuration.DatePrereleaseFormat : $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat
-    $incrementalPrerelease = ![string]::IsNullOrEmpty($configuration.IncrementalPrerelease) ? $configuration.IncrementalPrerelease -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_IncrementalPrerelease -eq 'true'
-    $usePRBodyAsReleaseNotes = ![string]::IsNullOrEmpty($configuration.UsePRBodyAsReleaseNotes) ? $configuration.UsePRBodyAsReleaseNotes -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_UsePRBodyAsReleaseNotes -eq 'true'
-    $usePRTitleAsReleaseName = ![string]::IsNullOrEmpty($configuration.UsePRTitleAsReleaseName) ? $configuration.UsePRTitleAsReleaseName -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_UsePRTitleAsReleaseName -eq 'true'
-    $usePRTitleAsNotesHeading = ![string]::IsNullOrEmpty($configuration.UsePRTitleAsNotesHeading) ? $configuration.UsePRTitleAsNotesHeading -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_UsePRTitleAsNotesHeading -eq 'true'
-    $versionPrefix = ![string]::IsNullOrEmpty($configuration.VersionPrefix) ? $configuration.VersionPrefix : $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix
-    $whatIf = ![string]::IsNullOrEmpty($configuration.WhatIf) ? $configuration.WhatIf -eq 'true' : $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf -eq 'true'
-
-    $ignoreLabels = (![string]::IsNullOrEmpty($configuration.IgnoreLabels) ? $configuration.IgnoreLabels : $env:PSMODULE_AUTO_RELEASE_INPUT_IgnoreLabels) -split ',' | ForEach-Object { $_.Trim() }
-    $majorLabels = (![string]::IsNullOrEmpty($configuration.MajorLabels) ? $configuration.MajorLabels : $env:PSMODULE_AUTO_RELEASE_INPUT_MajorLabels) -split ',' | ForEach-Object { $_.Trim() }
-    $minorLabels = (![string]::IsNullOrEmpty($configuration.MinorLabels) ? $configuration.MinorLabels : $env:PSMODULE_AUTO_RELEASE_INPUT_MinorLabels) -split ',' | ForEach-Object { $_.Trim() }
-    $patchLabels = (![string]::IsNullOrEmpty($configuration.PatchLabels) ? $configuration.PatchLabels : $env:PSMODULE_AUTO_RELEASE_INPUT_PatchLabels) -split ',' | ForEach-Object { $_.Trim() }
+    $autoCleanup = $releaseSettings.AutoCleanup
+    $defaultBump = $releaseSettings.DefaultBump
+    $defaultBumpSource = $releaseSettings.DefaultBumpSource
+    $createMajorTag = $releaseSettings.CreateMajorTag
+    $createMinorTag = $releaseSettings.CreateMinorTag
+    $datePrereleaseFormat = $releaseSettings.DatePrereleaseFormat
+    $incrementalPrerelease = $releaseSettings.IncrementalPrerelease
+    $usePRBodyAsReleaseNotes = $releaseSettings.UsePRBodyAsReleaseNotes
+    $usePRTitleAsReleaseName = $releaseSettings.UsePRTitleAsReleaseName
+    $usePRTitleAsNotesHeading = $releaseSettings.UsePRTitleAsNotesHeading
+    $versionPrefix = $releaseSettings.VersionPrefix
+    $whatIf = $releaseSettings.WhatIf
 
     Write-Output '-------------------------------------------------'
     Write-Output "Auto cleanup enabled:           [$autoCleanup]"
-    Write-Output "Auto patching enabled:          [$autoPatching]"
+    Write-Output "Default bump:                   [$defaultBump]"
+    Write-Output "Default bump source:            [$defaultBumpSource]"
     Write-Output "Create major tag enabled:       [$createMajorTag]"
     Write-Output "Create minor tag enabled:       [$createMinorTag]"
     Write-Output "Date-based prerelease format:   [$datePrereleaseFormat]"
@@ -68,50 +69,56 @@ LogGroup 'Set configuration' {
     Write-Output "Use PR title as notes heading:  [$usePRTitleAsNotesHeading]"
     Write-Output "Version prefix:                 [$versionPrefix]"
     Write-Output "What if mode:                   [$whatIf]"
-    Write-Output ''
-    Write-Output "Ignore labels:                  [$($ignoreLabels -join ', ')]"
-    Write-Output "Major labels:                   [$($majorLabels -join ', ')]"
-    Write-Output "Minor labels:                   [$($minorLabels -join ', ')]"
-    Write-Output "Patch labels:                   [$($patchLabels -join ', ')]"
     Write-Output '-------------------------------------------------'
 }
 
 LogGroup 'Event information - JSON' {
-    $githubEventJson = Get-Content $env:GITHUB_EVENT_PATH
+    $githubEventJson = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw
     $githubEventJson | Format-List | Out-String
 }
 
 LogGroup 'Event information - Object' {
-    $githubEvent = $githubEventJson | ConvertFrom-Json
-    if (-not $githubEvent.pull_request) {
-        Write-GitHubWarning 'This is not run for a pull request. Exiting.'
-        exit
-    }
-    $pull_request = $githubEvent.pull_request
+    $githubEvent = ConvertFrom-Json -InputObject $githubEventJson
     $githubEvent | Format-List | Out-String
 }
 
+$pull_request = $githubEvent.pull_request
+if (-not $pull_request) {
+    Write-GitHubWarning 'This is not run for a pull request. Exiting.'
+    return
+}
 $defaultBranchName = (gh repo view --json defaultBranchRef | ConvertFrom-Json | Select-Object -ExpandProperty defaultBranchRef).name
-$isPullRequest = $githubEvent.PSObject.Properties.Name -Contains 'pull_request'
-if (-not ($isPullRequest -or $whatIf)) {
-    Write-Warning '⚠️ A release should not be created in this context. Exiting.'
-    exit
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($defaultBranchName)) {
+    throw 'Could not determine the repository default branch.'
 }
 $actionType = $githubEvent.action
-$isMerged = ($pull_request.merged).ToString() -eq 'True'
+$isMerged = $pull_request.merged -is [bool] -and $pull_request.merged
 $prIsClosed = $pull_request.state -eq 'closed'
 $prBaseRef = $pull_request.base.ref
-$prHeadRef = $pull_request.head.ref
-$targetIsDefaultBranch = $pull_request.base.ref -eq $defaultBranchName
+$labels = @($pull_request.labels.name | Where-Object { $null -ne $_ })
+$decisionParameters = @{
+    Labels            = $labels
+    DefaultBump       = $defaultBump
+    DefaultBumpSource = $defaultBumpSource
+}
+$releaseDecision = Resolve-ReleaseDecision @decisionParameters
+$contextParameters = @{
+    PullRequest              = $pull_request
+    AllowEmptyPrereleaseName = (-not $releaseDecision.Prerelease)
+}
+$pullRequestReleaseContext = Resolve-PullRequestReleaseContext @contextParameters
+$prHeadRef = $pullRequestReleaseContext.HeadRef
+$prereleaseTarget = $pullRequestReleaseContext.PrereleaseTarget
+$targetIsDefaultBranch = $prBaseRef -ceq $defaultBranchName
 
 Write-Output '-------------------------------------------------'
 Write-Output "Default branch:                 [$defaultBranchName]"
-Write-Output "Is a pull request event:        [$isPullRequest]"
 Write-Output "Action type:                    [$actionType]"
 Write-Output "PR Merged:                      [$isMerged]"
 Write-Output "PR Closed:                      [$prIsClosed]"
 Write-Output "PR Base Ref:                    [$prBaseRef]"
 Write-Output "PR Head Ref:                    [$prHeadRef]"
+Write-Output "PR Head SHA:                    [$prereleaseTarget]"
 Write-Output "Target is default branch:       [$targetIsDefaultBranch]"
 Write-Output '-------------------------------------------------'
 
@@ -120,27 +127,69 @@ LogGroup 'Pull request - details' {
 }
 
 LogGroup 'Pull request - Labels' {
-    $labels = @()
-    $labels += $pull_request.labels.name
     $labels | Format-List | Out-String
 }
 
-$createRelease = $isMerged -and $targetIsDefaultBranch
-$closedPullRequest = $prIsClosed -and -not $isMerged
-$createPrerelease = $labels -Contains 'prerelease' -and -not $createRelease -and -not $closedPullRequest
-$prereleaseName = $prHeadRef -replace '[^a-zA-Z0-9]'
+$createRelease = $actionType -eq 'closed' -and $isMerged -and $prIsClosed -and $targetIsDefaultBranch -and -not $releaseDecision.Skip
+$stableTarget = $null
+if ($createRelease) {
+    $stableTarget = [string] $pull_request.merge_commit_sha
+    if ($stableTarget -notmatch '\A[0-9a-fA-F]{40}\z') {
+        throw 'A merged pull request must supply a full merge commit SHA before a stable release can publish.'
+    }
+    Write-Output "Stable target SHA:              [$stableTarget]"
 
-$ignoreRelease = ($labels | Where-Object { $ignoreLabels -contains $_ }).Count -gt 0
-if ($ignoreRelease) {
-    Write-Output 'Ignoring release creation.'
-    return
+    if ($whatIf) {
+        Write-Output "WhatIf: git fetch --no-tags origin $stableTarget"
+    } else {
+        git fetch --no-tags origin $stableTarget
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to fetch the merge commit [$stableTarget]. git exited with code [$LASTEXITCODE]."
+        }
+    }
 }
 
-$majorRelease = ($labels | Where-Object { $majorLabels -contains $_ }).Count -gt 0
-$minorRelease = ($labels | Where-Object { $minorLabels -contains $_ }).Count -gt 0 -and -not $majorRelease
-$patchRelease = (($labels | Where-Object { $patchLabels -contains $_ }).Count -gt 0 -or $autoPatching) -and -not $majorRelease -and -not $minorRelease
+LogGroup 'Provision release labels' {
+    if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) {
+        throw 'GITHUB_REPOSITORY is required to provision release labels.'
+    }
+
+    foreach ($definition in Get-ReleaseLabelDefinition) {
+        $arguments = @(
+            'label'
+            'create'
+            $definition.Name
+            '--repo'
+            $env:GITHUB_REPOSITORY
+            '--color'
+            $definition.Color
+            '--description'
+            $definition.Description
+            '--force'
+        )
+        if ($whatIf) {
+            Write-Output "WhatIf: gh $($arguments -join ' ')"
+        } else {
+            gh @arguments
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to provision the canonical label [$($definition.Name)]. gh exited with code [$LASTEXITCODE]."
+            }
+        }
+    }
+}
+
+$closedPullRequest = $prIsClosed -and -not $isMerged
+$createPrerelease = Test-PrereleaseCreation -ReleaseDecision $releaseDecision -PullRequestClosed:$prIsClosed
+$prereleaseName = $pullRequestReleaseContext.PrereleaseName
+
+$majorRelease = $releaseDecision.Bump -eq 'Major'
+$minorRelease = $releaseDecision.Bump -eq 'Minor'
+$patchRelease = $releaseDecision.Bump -eq 'Patch'
 
 Write-Output '-------------------------------------------------'
+Write-Output "Default bump applied:           [$($releaseDecision.DefaultBumpApplied)]"
+Write-Output "Bump source:                    [$($releaseDecision.BumpSource)]"
+Write-Output "Skip release:                   [$($releaseDecision.Skip)]"
 Write-Output "Create a release:               [$createRelease]"
 Write-Output "Create a prerelease:            [$createPrerelease]"
 Write-Output "Create a major release:         [$majorRelease]"
@@ -152,30 +201,34 @@ Write-Output '-------------------------------------------------'
 LogGroup 'Get releases' {
     $releases = gh release list --json 'createdAt,isDraft,isLatest,isPrerelease,name,publishedAt,tagName' | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) {
-        Write-Error 'Failed to list all releases for the repo.'
-        exit $LASTEXITCODE
+        throw "Failed to list all releases for the repo. gh exited with code [$LASTEXITCODE]."
     }
     $releases | Select-Object -Property name, isPrerelease, isLatest, publishedAt | Format-Table | Out-String
 }
 
-LogGroup 'Get latest version' {
-    $latestRelease = $releases | Where-Object { $_.isLatest -eq $true }
-    $latestRelease | Format-List | Out-String
-    $latestVersionString = $latestRelease.tagName
-    if (![string]::IsNullOrEmpty($latestVersionString)) {
-        $latestVersion = $latestVersionString | ConvertTo-PSSemVer
-        Write-Output '-------------------------------------------------'
-        Write-Output 'Latest version:'
-        $latestVersion | Format-Table
-        $latestVersion = $latestVersion.ToString()
+$latestVersion = $null
+if (-not $releaseDecision.Skip) {
+    LogGroup 'Get latest version' {
+        $latestRelease = $releases | Where-Object { $_.isLatest -eq $true }
+        $latestRelease | Format-List | Out-String
+        $latestVersionString = $latestRelease.tagName
+        if (![string]::IsNullOrEmpty($latestVersionString)) {
+            $latestVersion = $latestVersionString | ConvertTo-PSSemVer
+            Write-Output '-------------------------------------------------'
+            Write-Output 'Latest version:'
+            $latestVersion | Format-Table
+            $latestVersion = $latestVersion.ToString()
+        }
     }
+} else {
+    Write-Output 'Skip selected; no release version is resolved.'
 }
 
 Write-Output '-------------------------------------------------'
 Write-Output "Latest version:                 [$latestVersion]"
 Write-Output '-------------------------------------------------'
 
-if ($createPrerelease -or $createRelease -or $whatIf) {
+if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $whatIf)) {
     LogGroup 'Calculate new version' {
         $latestVersion = New-PSSemVer -Version $latestVersion
         $newVersion = New-PSSemVer -Version $latestVersion
@@ -226,8 +279,7 @@ if ($createPrerelease -or $createRelease -or $whatIf) {
                 } else {
                     gh release delete $newVersion --cleanup-tag --yes
                     if ($LASTEXITCODE -ne 0) {
-                        Write-Error "Failed to delete the release [$newVersion]."
-                        exit $LASTEXITCODE
+                        throw "Failed to delete the release [$newVersion]. gh exited with code [$LASTEXITCODE]."
                     }
                 }
             }
@@ -262,25 +314,24 @@ if ($createPrerelease -or $createRelease -or $whatIf) {
             }
 
             # Add remaining parameters
-            $releaseCreateCommand += @('--target', $prHeadRef, '--prerelease')
+            $releaseCreateCommand += @('--target', $prereleaseTarget, '--prerelease')
 
             Write-Output "gh $($releaseCreateCommand -join ' ')"
             if (-not $whatIf) {
                 # Execute the command and capture the output
                 $releaseURL = gh @releaseCreateCommand
                 if ($LASTEXITCODE -ne 0) {
-                    Write-Error "Failed to create the release [$newVersion]."
-                    exit $LASTEXITCODE
+                    throw "Failed to create the release [$newVersion]. gh exited with code [$LASTEXITCODE]."
                 }
             }
 
             if ($whatIf) {
-                Write-Output 'WhatIf: gh pr comment $pull_request.number -b "The release [$newVersion] has been created."'
+                $commentPreview = 'WhatIf: gh pr comment {0} -b "The release [{1}] has been created."' -f $pull_request.number, $newVersion
+                Write-Output $commentPreview
             } else {
                 gh pr comment $pull_request.number -b "The release [$newVersion]($releaseURL) has been created."
                 if ($LASTEXITCODE -ne 0) {
-                    Write-Error 'Failed to comment on the pull request.'
-                    exit $LASTEXITCODE
+                    throw "Failed to comment on the pull request. gh exited with code [$LASTEXITCODE]."
                 }
             }
         } else {
@@ -313,48 +364,46 @@ if ($createPrerelease -or $createRelease -or $whatIf) {
                 $releaseCreateCommand += '--generate-notes'
             }
 
+            if ($createRelease) {
+                $versionTagPush = @('push', '--no-follow-tags', 'origin', "${stableTarget}:refs/tags/$newVersion")
+                if ($whatIf) {
+                    Write-Output "WhatIf: git $($versionTagPush -join ' ')"
+                } else {
+                    # Do not force the version tag. A conflicting tag must stop publication.
+                    git @versionTagPush
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Failed to set version tag [$newVersion] to [$stableTarget]. git exited with code [$LASTEXITCODE]."
+                    }
+                }
+                $releaseCreateCommand += @('--verify-tag', '--target', $stableTarget)
+            }
+
             Write-Output "gh $($releaseCreateCommand -join ' ')"
             if (-not $whatIf) {
                 gh @releaseCreateCommand
                 if ($LASTEXITCODE -ne 0) {
-                    Write-Error "Failed to create the release [$newVersion]."
-                    exit $LASTEXITCODE
+                    throw "Failed to create the release [$newVersion]. gh exited with code [$LASTEXITCODE]."
                 }
             }
 
-            if ($createMajorTag) {
-                $majorTag = ('{0}{1}' -f $newVersion.Prefix, $newVersion.Major)
+            if ($createRelease -and ($createMajorTag -or $createMinorTag)) {
+                $aliasPush = @('push', '--no-follow-tags', 'origin')
+                if ($createMajorTag) {
+                    $majorTag = ('{0}{1}' -f $newVersion.Prefix, $newVersion.Major)
+                    $aliasPush += "+${stableTarget}:refs/tags/$majorTag"
+                }
+                if ($createMinorTag) {
+                    $minorTag = ('{0}{1}.{2}' -f $newVersion.Prefix, $newVersion.Major, $newVersion.Minor)
+                    $aliasPush += "+${stableTarget}:refs/tags/$minorTag"
+                }
+
                 if ($whatIf) {
-                    Write-Output "WhatIf: git tag -f $majorTag 'main'"
+                    Write-Output "WhatIf: git $($aliasPush -join ' ')"
                 } else {
-                    git tag -f $majorTag 'main'
+                    git @aliasPush
                     if ($LASTEXITCODE -ne 0) {
-                        Write-Error "Failed to create major tag [$majorTag]."
-                        exit $LASTEXITCODE
+                        throw "Failed to update the enabled aliases for [$newVersion]. git exited with code [$LASTEXITCODE]."
                     }
-                }
-            }
-
-            if ($createMinorTag) {
-                $minorTag = ('{0}{1}.{2}' -f $newVersion.Prefix, $newVersion.Major, $newVersion.Minor)
-                if ($whatIf) {
-                    Write-Output "WhatIf: git tag -f $minorTag 'main'"
-                } else {
-                    git tag -f $minorTag 'main'
-                    if ($LASTEXITCODE -ne 0) {
-                        Write-Error "Failed to create minor tag [$minorTag]."
-                        exit $LASTEXITCODE
-                    }
-                }
-            }
-
-            if ($whatIf) {
-                Write-Output 'WhatIf: git push origin --tags --force'
-            } else {
-                git push origin --tags --force
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Error 'Failed to push tags.'
-                    exit $LASTEXITCODE
                 }
             }
         }
@@ -365,11 +414,18 @@ if ($createPrerelease -or $createRelease -or $whatIf) {
 }
 
 LogGroup 'List prereleases using the same name' {
-    $prereleasesToCleanup = $releases | Where-Object { $_.tagName -like "*$prereleaseName*" }
+    $prereleasesToCleanup = @()
+    if ([string]::IsNullOrEmpty($prereleaseName)) {
+        Write-Output 'This branch has no prerelease identifier; cleanup has no candidates.'
+    } else {
+        $prereleasesToCleanup = @(
+            Get-PrereleaseCleanupCandidate -Releases $releases -PrereleaseName $prereleaseName -VersionPrefix $versionPrefix
+        )
+    }
     $prereleasesToCleanup | Select-Object -Property name, publishedAt, isPrerelease, isLatest | Format-Table | Out-String
 }
 
-if ((($closedPullRequest -or $createRelease) -and $autoCleanup) -or $whatIf) {
+if (($prIsClosed -and $autoCleanup) -or $whatIf) {
     LogGroup "Cleanup prereleases for [$prereleaseName]" {
         foreach ($rel in $prereleasesToCleanup) {
             $relTagName = $rel.tagName
@@ -379,8 +435,7 @@ if ((($closedPullRequest -or $createRelease) -and $autoCleanup) -or $whatIf) {
             } else {
                 gh release delete $rel.tagName --cleanup-tag --yes
                 if ($LASTEXITCODE -ne 0) {
-                    Write-Error "Failed to delete release [$relTagName]."
-                    exit $LASTEXITCODE
+                    throw "Failed to delete release [$relTagName]. gh exited with code [$LASTEXITCODE]."
                 }
             }
         }

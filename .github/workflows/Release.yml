@@ -12,25 +12,33 @@ on:
       - reopened
       - synchronize
       - labeled
-    paths:
-      - 'action.yml'
-      - 'src/**'
+      - unlabeled
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.merged && github.event.pull_request.base.ref || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write # Required to create releases
+  issues: write # Required to provision release labels
   pull-requests: write # Required to create comments on the PRs
 
 jobs:
   Release:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     steps:
+      - name: Require the merge commit SHA
+        if: ${{ github.event.action == 'closed' && github.event.pull_request.merged && !github.event.pull_request.merge_commit_sha }}
+        shell: pwsh
+        run: throw 'GitHub did not report the merge commit SHA.'
+
       - name: Checkout repo
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: >-
+            ${{ github.event.action == 'closed' && github.event.pull_request.merged
+            && github.event.pull_request.merge_commit_sha || github.event.pull_request.base.sha }}
           persist-credentials: false
 
       - name: Release
