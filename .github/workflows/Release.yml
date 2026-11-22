@@ -3,7 +3,7 @@ name: Release
 run-name: "Release - [${{ github.event.pull_request.title }} #${{ github.event.pull_request.number }}] by @${{ github.actor }}"
 
 on:
-  pull_request_target: # zizmor: ignore[dangerous-triggers] trusted base checkout; writes labels and releases
+  pull_request_target: # zizmor: ignore[dangerous-triggers] only trusted base or merged commits
     branches:
       - main
     types:
@@ -27,9 +27,17 @@ jobs:
   Release:
     runs-on: ubuntu-latest
     steps:
+      - name: Require the merge commit SHA
+        if: ${{ github.event.action == 'closed' && github.event.pull_request.merged && !github.event.pull_request.merge_commit_sha }}
+        shell: pwsh
+        run: throw 'GitHub did not report the merge commit SHA.'
+
       - name: Checkout repo
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: >-
+            ${{ github.event.action == 'closed' && github.event.pull_request.merged
+            && github.event.pull_request.merge_commit_sha || github.sha }}
           persist-credentials: false
 
       - name: Release

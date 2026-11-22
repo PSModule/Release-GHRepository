@@ -86,6 +86,7 @@ VersionPrefix: v
 WhatIf: false
 '@
     $headSha = '0123456789012345678901234567890123456789'
+    $squashCommitSha = 'fedcba9876543210fedcba9876543210fedcba98'
     $authoredBody = @'
 This release preserves the source-bound adoption record.
 
@@ -927,6 +928,7 @@ Version: '[0.43.0, 1.0.0)'
 
     It 'targets a prerelease at the exact pull-request head without executing publication commands' {
         $githubEvent.pull_request.labels = @(@{ name = 'release:prerelease' }, @{ name = 'release:minor' })
+        $githubEvent.pull_request.merge_commit_sha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 
         $output = (& $runRelease) -join "`n"
@@ -936,6 +938,119 @@ Version: '[0.43.0, 1.0.0)'
         $output | Should -Match 'WhatIf: gh pr comment 42 '
         Should -Invoke gh -Times 2 -Exactly
         Should -Invoke git -Times 0 -Exactly
+    }
+
+    Context 'Stable publication from a merged pull request' {
+        BeforeEach {
+            $githubEvent.action = 'closed'
+            $githubEvent.pull_request.merged = $true
+            $githubEvent.pull_request.state = 'closed'
+            $githubEvent.pull_request.merge_commit_sha = $squashCommitSha
+            $githubEvent.pull_request.labels = @(@{ name = 'release:major' })
+            $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+            $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'false'
+            $simulateLabelWrites = $true
+            Mock git { $global:LASTEXITCODE = 0 }
+            Mock gh { $global:LASTEXITCODE = 0 } -ParameterFilter {
+                $args[0] -eq 'release' -and $args[1] -eq 'create'
+            }
+        }
+
+        It 'points the version tag and both enabled aliases at the squash commit' {
+            $null = & $runRelease
+
+            Should -Invoke git -Times 3 -Exactly
+            Should -Invoke git -Times 1 -Exactly -ParameterFilter {
+                ($args -join ' ') -ceq "fetch --no-tags origin $squashCommitSha"
+            }
+            Should -Invoke git -Times 1 -Exactly -ParameterFilter {
+                ($args -join ' ') -ceq "push --no-follow-tags origin ${squashCommitSha}:refs/tags/v3.0.0"
+            }
+            Should -Invoke gh -Times 1 -Exactly -ParameterFilter {
+                $args[0] -eq 'release' -and $args[1] -eq 'create' -and $args[2] -eq 'v3.0.0' -and
+                $args -contains '--verify-tag' -and $args[-1] -ceq $squashCommitSha -and
+                $args -notcontains '--prerelease'
+            }
+            Should -Invoke git -Times 1 -Exactly -ParameterFilter {
+                ($args -join ' ') -ceq "push --no-follow-tags origin +${squashCommitSha}:refs/tags/v3 +${squashCommitSha}:refs/tags/v3.0"
+            }
+        }
+
+        It 'does not update disabled aliases' {
+            $env:PSMODULE_AUTO_RELEASE_INPUT_CreateMajorTag = 'false'
+            $env:PSMODULE_AUTO_RELEASE_INPUT_CreateMinorTag = 'false'
+
+            $null = & $runRelease
+
+            Should -Invoke git -Times 1 -Exactly -ParameterFilter { $args[0] -eq 'push' }
+            Should -Invoke git -Times 1 -Exactly -ParameterFilter {
+                ($args -join ' ') -ceq "push --no-follow-tags origin ${squashCommitSha}:refs/tags/v3.0.0"
+            }
+        }
+
+        It 'does not publish or move aliases if Git rejects the version tag' {
+            Mock git { $global:LASTEXITCODE = 1 } -ParameterFilter {
+                $args[0] -eq 'push' -and $args -contains "${squashCommitSha}:refs/tags/v3.0.0"
+            }
+
+            { & $runRelease } | Should -Throw '*version tag*v3.0.0*'
+
+            Should -Invoke gh -Times 0 -Exactly -ParameterFilter {
+                $args[0] -eq 'release' -and $args[1] -eq 'create'
+            }
+            Should -Invoke git -Times 1 -Exactly -ParameterFilter { $args[0] -eq 'push' }
+        }
+
+        It 'rejects a <SourceCase> merge SHA before writing labels or tags' -ForEach @(
+            @{ SourceCase = 'missing'; MergeSha = $null }
+            @{ SourceCase = 'branch name instead of a'; MergeSha = 'main' }
+        ) {
+            $githubEvent.pull_request.merge_commit_sha = $MergeSha
+            $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+
+            { & $runRelease } | Should -Throw '*merge commit SHA*'
+
+            Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[0] -eq 'label' -or $args[0] -eq 'release' }
+            Should -Invoke git -Times 0 -Exactly
+        }
+
+        It 'does not write labels or tags if it cannot fetch the squash commit' {
+            Mock git { $global:LASTEXITCODE = 1 } -ParameterFilter { $args[0] -eq 'fetch' }
+
+            { & $runRelease } | Should -Throw '*Failed to fetch the merge commit*'
+
+            Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[0] -eq 'label' -or $args[0] -eq 'release' }
+            Should -Invoke git -Times 0 -Exactly -ParameterFilter { $args[0] -eq 'push' }
+        }
+
+        It 'does not publish a stable release on <Case>' -ForEach @(
+            @{ Case = 'a label change after merge'; Action = 'labeled'; Base = 'main' }
+            @{ Case = 'a merge into a different branch'; Action = 'closed'; Base = 'Main' }
+        ) {
+            $githubEvent.action = $Action
+            $githubEvent.pull_request.base.ref = $Base
+            $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+
+            $null = & $runRelease
+
+            Should -Invoke gh -Times 0 -Exactly -ParameterFilter {
+                $args[0] -eq 'release' -and $args[1] -eq 'create'
+            }
+            Should -Invoke git -Times 0 -Exactly
+        }
+    }
+
+    It 'does not write labels or tags when the event has no pull request' {
+        '{}' | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+        $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'false'
+        $simulateLabelWrites = $true
+        Mock Write-GitHubWarning {}
+
+        $null = & $runRelease
+
+        Should -Invoke gh -Times 0 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+        Should -Invoke Write-GitHubWarning -Times 1 -Exactly
     }
 
     It 'rejects conflicting owned labels instead of falling back to the default' {

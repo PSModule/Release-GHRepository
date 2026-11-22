@@ -72,6 +72,83 @@ LogGroup 'Set configuration' {
     Write-Output '-------------------------------------------------'
 }
 
+LogGroup 'Event information - JSON' {
+    $githubEventJson = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw
+    $githubEventJson | Format-List | Out-String
+}
+
+LogGroup 'Event information - Object' {
+    $githubEvent = ConvertFrom-Json -InputObject $githubEventJson
+    $githubEvent | Format-List | Out-String
+}
+
+$pull_request = $githubEvent.pull_request
+if (-not $pull_request) {
+    Write-GitHubWarning 'This is not run for a pull request. Exiting.'
+    return
+}
+$defaultBranchName = (gh repo view --json defaultBranchRef | ConvertFrom-Json | Select-Object -ExpandProperty defaultBranchRef).name
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($defaultBranchName)) {
+    throw 'Could not determine the repository default branch.'
+}
+$actionType = $githubEvent.action
+$isMerged = $pull_request.merged -is [bool] -and $pull_request.merged
+$prIsClosed = $pull_request.state -eq 'closed'
+$prBaseRef = $pull_request.base.ref
+$labels = @($pull_request.labels.name | Where-Object { $null -ne $_ })
+$decisionParameters = @{
+    Labels            = $labels
+    DefaultBump       = $defaultBump
+    DefaultBumpSource = $defaultBumpSource
+}
+$releaseDecision = Resolve-ReleaseDecision @decisionParameters
+$contextParameters = @{
+    PullRequest              = $pull_request
+    AllowEmptyPrereleaseName = (-not $releaseDecision.Prerelease)
+}
+$pullRequestReleaseContext = Resolve-PullRequestReleaseContext @contextParameters
+$prHeadRef = $pullRequestReleaseContext.HeadRef
+$prereleaseTarget = $pullRequestReleaseContext.PrereleaseTarget
+$targetIsDefaultBranch = $prBaseRef -ceq $defaultBranchName
+
+Write-Output '-------------------------------------------------'
+Write-Output "Default branch:                 [$defaultBranchName]"
+Write-Output "Action type:                    [$actionType]"
+Write-Output "PR Merged:                      [$isMerged]"
+Write-Output "PR Closed:                      [$prIsClosed]"
+Write-Output "PR Base Ref:                    [$prBaseRef]"
+Write-Output "PR Head Ref:                    [$prHeadRef]"
+Write-Output "PR Head SHA:                    [$prereleaseTarget]"
+Write-Output "Target is default branch:       [$targetIsDefaultBranch]"
+Write-Output '-------------------------------------------------'
+
+LogGroup 'Pull request - details' {
+    $pull_request | Format-List | Out-String
+}
+
+LogGroup 'Pull request - Labels' {
+    $labels | Format-List | Out-String
+}
+
+$createRelease = $actionType -eq 'closed' -and $isMerged -and $prIsClosed -and $targetIsDefaultBranch -and -not $releaseDecision.Skip
+$stableTarget = $null
+if ($createRelease) {
+    $stableTarget = [string] $pull_request.merge_commit_sha
+    if ($stableTarget -notmatch '\A[0-9a-fA-F]{40}\z') {
+        throw 'A merged pull request must supply a full merge commit SHA before a stable release can publish.'
+    }
+    Write-Output "Stable target SHA:              [$stableTarget]"
+
+    if ($whatIf) {
+        Write-Output "WhatIf: git fetch --no-tags origin $stableTarget"
+    } else {
+        git fetch --no-tags origin $stableTarget
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to fetch the merge commit [$stableTarget]. git exited with code [$LASTEXITCODE]."
+        }
+    }
+}
+
 LogGroup 'Provision release labels' {
     if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) {
         throw 'GITHUB_REPOSITORY is required to provision release labels.'
@@ -101,68 +178,6 @@ LogGroup 'Provision release labels' {
     }
 }
 
-LogGroup 'Event information - JSON' {
-    $githubEventJson = Get-Content $env:GITHUB_EVENT_PATH
-    $githubEventJson | Format-List | Out-String
-}
-
-LogGroup 'Event information - Object' {
-    $githubEvent = $githubEventJson | ConvertFrom-Json
-    if (-not $githubEvent.pull_request) {
-        Write-GitHubWarning 'This is not run for a pull request. Exiting.'
-        exit
-    }
-    $pull_request = $githubEvent.pull_request
-    $githubEvent | Format-List | Out-String
-}
-
-$defaultBranchName = (gh repo view --json defaultBranchRef | ConvertFrom-Json | Select-Object -ExpandProperty defaultBranchRef).name
-$isPullRequest = $githubEvent.PSObject.Properties.Name -Contains 'pull_request'
-if (-not ($isPullRequest -or $whatIf)) {
-    Write-Warning '⚠️ A release should not be created in this context. Exiting.'
-    exit
-}
-$actionType = $githubEvent.action
-$isMerged = ($pull_request.merged).ToString() -eq 'True'
-$prIsClosed = $pull_request.state -eq 'closed'
-$prBaseRef = $pull_request.base.ref
-$labels = @($pull_request.labels.name | Where-Object { $null -ne $_ })
-$decisionParameters = @{
-    Labels            = $labels
-    DefaultBump       = $defaultBump
-    DefaultBumpSource = $defaultBumpSource
-}
-$releaseDecision = Resolve-ReleaseDecision @decisionParameters
-$contextParameters = @{
-    PullRequest              = $pull_request
-    AllowEmptyPrereleaseName = (-not $releaseDecision.Prerelease)
-}
-$pullRequestReleaseContext = Resolve-PullRequestReleaseContext @contextParameters
-$prHeadRef = $pullRequestReleaseContext.HeadRef
-$prereleaseTarget = $pullRequestReleaseContext.PrereleaseTarget
-$targetIsDefaultBranch = $pull_request.base.ref -eq $defaultBranchName
-
-Write-Output '-------------------------------------------------'
-Write-Output "Default branch:                 [$defaultBranchName]"
-Write-Output "Is a pull request event:        [$isPullRequest]"
-Write-Output "Action type:                    [$actionType]"
-Write-Output "PR Merged:                      [$isMerged]"
-Write-Output "PR Closed:                      [$prIsClosed]"
-Write-Output "PR Base Ref:                    [$prBaseRef]"
-Write-Output "PR Head Ref:                    [$prHeadRef]"
-Write-Output "PR Head SHA:                    [$prereleaseTarget]"
-Write-Output "Target is default branch:       [$targetIsDefaultBranch]"
-Write-Output '-------------------------------------------------'
-
-LogGroup 'Pull request - details' {
-    $pull_request | Format-List | Out-String
-}
-
-LogGroup 'Pull request - Labels' {
-    $labels | Format-List | Out-String
-}
-
-$createRelease = $isMerged -and $targetIsDefaultBranch -and -not $releaseDecision.Skip
 $closedPullRequest = $prIsClosed -and -not $isMerged
 $createPrerelease = Test-PrereleaseCreation -ReleaseDecision $releaseDecision -PullRequestClosed:$prIsClosed
 $prereleaseName = $pullRequestReleaseContext.PrereleaseName
@@ -349,6 +364,20 @@ if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $w
                 $releaseCreateCommand += '--generate-notes'
             }
 
+            if ($createRelease) {
+                $versionTagPush = @('push', '--no-follow-tags', 'origin', "${stableTarget}:refs/tags/$newVersion")
+                if ($whatIf) {
+                    Write-Output "WhatIf: git $($versionTagPush -join ' ')"
+                } else {
+                    # Do not force the version tag. A conflicting tag must stop publication.
+                    git @versionTagPush
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Failed to set version tag [$newVersion] to [$stableTarget]. git exited with code [$LASTEXITCODE]."
+                    }
+                }
+                $releaseCreateCommand += @('--verify-tag', '--target', $stableTarget)
+            }
+
             Write-Output "gh $($releaseCreateCommand -join ' ')"
             if (-not $whatIf) {
                 gh @releaseCreateCommand
@@ -357,36 +386,24 @@ if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $w
                 }
             }
 
-            if ($createMajorTag) {
-                $majorTag = ('{0}{1}' -f $newVersion.Prefix, $newVersion.Major)
-                if ($whatIf) {
-                    Write-Output "WhatIf: git tag -f $majorTag 'main'"
-                } else {
-                    git tag -f $majorTag 'main'
-                    if ($LASTEXITCODE -ne 0) {
-                        throw "Failed to create major tag [$majorTag]. git exited with code [$LASTEXITCODE]."
-                    }
+            if ($createRelease -and ($createMajorTag -or $createMinorTag)) {
+                $aliasPush = @('push', '--no-follow-tags', 'origin')
+                if ($createMajorTag) {
+                    $majorTag = ('{0}{1}' -f $newVersion.Prefix, $newVersion.Major)
+                    $aliasPush += "+${stableTarget}:refs/tags/$majorTag"
                 }
-            }
-
-            if ($createMinorTag) {
-                $minorTag = ('{0}{1}.{2}' -f $newVersion.Prefix, $newVersion.Major, $newVersion.Minor)
-                if ($whatIf) {
-                    Write-Output "WhatIf: git tag -f $minorTag 'main'"
-                } else {
-                    git tag -f $minorTag 'main'
-                    if ($LASTEXITCODE -ne 0) {
-                        throw "Failed to create minor tag [$minorTag]. git exited with code [$LASTEXITCODE]."
-                    }
+                if ($createMinorTag) {
+                    $minorTag = ('{0}{1}.{2}' -f $newVersion.Prefix, $newVersion.Major, $newVersion.Minor)
+                    $aliasPush += "+${stableTarget}:refs/tags/$minorTag"
                 }
-            }
 
-            if ($whatIf) {
-                Write-Output 'WhatIf: git push origin --tags --force'
-            } else {
-                git push origin --tags --force
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Failed to push tags. git exited with code [$LASTEXITCODE]."
+                if ($whatIf) {
+                    Write-Output "WhatIf: git $($aliasPush -join ' ')"
+                } else {
+                    git @aliasPush
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Failed to update the enabled aliases for [$newVersion]. git exited with code [$LASTEXITCODE]."
+                    }
                 }
             }
         }

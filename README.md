@@ -30,9 +30,13 @@ Labels outside this set do not affect releases. Bare and legacy labels such as `
 
 ## How it works
 
-On every non-WhatIf run, the action creates missing canonical labels and reconciles their colors and descriptions. It leaves all other repository labels unchanged.
+On a pull request run with `WhatIf: false`, the action creates missing owned labels and updates their colors and descriptions. It leaves all other labels unchanged. A run without a pull request does not update labels or publish releases.
 
-An open pull request with `release:prerelease` publishes a prerelease from its explicit bump or `DefaultBump`. The prerelease name uses the head branch, while its tag targets the exact pull-request head commit. A pull request merged into the default branch publishes the resolved bump unless it carries `release:skip`. A closed pull request cleans up its prereleases when `AutoCleanup` is enabled. `release:skip` never publishes a version, but a closed skipped pull request still receives prerelease cleanup.
+An open pull request with `release:prerelease` publishes a prerelease from its explicit bump or `DefaultBump`. The prerelease name uses the head branch, while its tag targets the exact pull request head commit.
+
+When a pull request merges into the default branch, the close event uses the resolved bump unless the pull request carries `release:skip`. The stable version tag points to the commit GitHub added to the default branch. For a squash merge, this is the squash commit, not the pull request head or a newer branch tip. The action does not move an existing version tag. After publication, it updates only the enabled major and minor tags to the same commit.
+
+A closed pull request cleans up its prereleases when `AutoCleanup` is enabled. `release:skip` prevents publication but does not stop cleanup on close.
 
 Cleanup uses the effective `VersionPrefix` to locate the version core, then matches the exact case-sensitive branch identifier. Version-like text in a prefix cannot select another branch's release. Empty and hyphenated prefixes remain valid. If you change the prefix, automatic cleanup retains releases under earlier prefixes. Close active prerelease series before a prefix change, or retain their releases for separate authorized cleanup.
 
@@ -70,9 +74,17 @@ jobs:
   Release-GHRepository:
     runs-on: ubuntu-24.04
     steps:
+      - name: Require the merge commit SHA
+        if: ${{ github.event.action == 'closed' && github.event.pull_request.merged && !github.event.pull_request.merge_commit_sha }}
+        shell: pwsh
+        run: throw 'GitHub did not report the merge commit SHA.'
+
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: >-
+            ${{ github.event.action == 'closed' && github.event.pull_request.merged
+            && github.event.pull_request.merge_commit_sha || github.sha }}
           persist-credentials: false
 
       - name: Release repository
@@ -81,7 +93,7 @@ jobs:
 
 Select the full immutable commit SHA of an authorized, published release that supports this contract. An open pull request's head is a development candidate, not a production dependency. A controlled major tag is an option only when the producer's release automation exclusively maintains it within its compatible stable line.
 
-The `pull_request_target` workflow checks out the trusted base branch. Do not check out or execute an untrusted pull-request head with this writable token.
+The `pull_request_target` workflow checks out the trusted base commit or the exact merged commit. Do not check out or execute an untrusted pull request head with this writable token.
 
 ## Inputs
 
