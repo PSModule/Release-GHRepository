@@ -16,7 +16,7 @@ inputs:
       Select the repository settings file before startup. Relative paths use an explicit WorkingDirectory,
       otherwise github.workspace. Nonempty named inputs override file values; omitted or empty inputs retain them.
     required: false
-    default: .github\auto-release.yml
+    default: .github\release.settings.yml
   DefaultBump:
     description: >-
       The release bump without an owned bump or skip label. Accepts exactly patch, minor, or major.

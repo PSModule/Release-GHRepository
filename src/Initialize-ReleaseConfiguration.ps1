@@ -83,8 +83,8 @@ try {
         $initialDirectory = ConvertTo-ReleaseSettingValue @initialParameters
     }
     $settingsFilePath = [Environment]::GetEnvironmentVariable('PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath')
+    $actionDefinition = ConvertFrom-Yaml -Yaml ([IO.File]::ReadAllText($actionDefinitionPath))
     if ($null -eq $settingsFilePath) {
-        $actionDefinition = ConvertFrom-Yaml -Yaml ([IO.File]::ReadAllText($actionDefinitionPath))
         $settingsFilePath = $actionDefinition.inputs.SettingsFilePath.default
     }
     $pathParameters = @{
@@ -93,12 +93,34 @@ try {
         BaseDirectory = $initialDirectory
     }
     $settingsFilePath = Resolve-ReleaseFileSystemPath @pathParameters
+    $defaultPathParameters = @{
+        Name          = 'SettingsFilePath'
+        Path          = $actionDefinition.inputs.SettingsFilePath.default
+        BaseDirectory = $initialDirectory
+    }
+    $defaultConfigurationPath = Resolve-ReleaseFileSystemPath @defaultPathParameters
+    $legacyConfigurationPath = Join-Path -Path (Split-Path -Path $defaultConfigurationPath -Parent) -ChildPath 'auto-release.yml'
+    $pathComparison = [StringComparison]::Ordinal
+    if ($IsWindows) {
+        $pathComparison = [StringComparison]::OrdinalIgnoreCase
+    }
+    $usesDefaultPath = [string]::Equals($settingsFilePath, $defaultConfigurationPath, $pathComparison)
+    $usesLegacyPath = [string]::Equals($settingsFilePath, $legacyConfigurationPath, $pathComparison)
+    $configurationExists = Test-Path -LiteralPath $settingsFilePath -PathType Leaf
+    $legacyExists = Test-Path -LiteralPath $legacyConfigurationPath -PathType Leaf
+    if ($usesLegacyPath -or ($legacyExists -and ($usesDefaultPath -or -not $configurationExists))) {
+        throw (
+            "Settings path [$legacyConfigurationPath] is no longer supported. " +
+            "Rename or combine its policy in [$defaultConfigurationPath]. " +
+            'Update SettingsFilePath with a compatible action reference, or select an existing custom settings file.'
+        )
+    }
     if (Test-Path -LiteralPath $settingsFilePath -PathType Container) {
         throw 'SettingsFilePath must select a file, not a directory.'
     }
     $loggedPath = ConvertTo-Json -InputObject $settingsFilePath -Compress
     $configuration = @{}
-    if (Test-Path -LiteralPath $settingsFilePath -PathType Leaf) {
+    if ($configurationExists) {
         Write-Information "Reading settings file [$loggedPath]" -InformationAction Continue
         $configuration = ConvertFrom-Yaml -Yaml ([IO.File]::ReadAllText($settingsFilePath))
         if ($null -eq $configuration) {

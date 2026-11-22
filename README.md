@@ -105,7 +105,7 @@ Each setting has a matching named input and an effective standard in its descrip
 | Name | Description | Effective default | Required |
 | --- | --- | --- | --- |
 | `AutoCleanup` | Delete prereleases after the pull request closes. | `true` | false |
-| `SettingsFilePath` | Select the repository settings file before startup. | `.github\auto-release.yml` | false |
+| `SettingsFilePath` | Select the repository settings file before startup. | `.github\release.settings.yml` | false |
 | `DefaultBump` | Select the bump when no explicit bump or skip label exists. Accepts exactly `patch`, `minor`, or `major` with case-sensitive matching. | `patch` | false |
 | `CreateMajorTag` | Create or update the floating major tag after a stable release. | `true` | false |
 | `CreateMinorTag` | Create or update the floating minor tag after a stable release. | `true` | false |
@@ -126,7 +126,11 @@ Use the `release:prerelease` label to select repository prerelease behavior. The
 
 ### Settings file path
 
-The default repository settings file path is `.github\auto-release.yml`. Use `SettingsFilePath` to select a custom file. Omit this selector to use the default path; an empty or whitespace-only path is invalid. Literal paths with spaces or brackets are supported. A directory or a non-file-system provider is not a settings file. If the selected file is absent, valid standards and nonempty named inputs remain effective.
+The default repository settings file path is `.github\release.settings.yml`. Use `SettingsFilePath` to select a custom file. Omit this selector to use the default path. An empty or whitespace-only path is invalid. The action supports literal paths with spaces or brackets. A directory or a non-file-system provider is not a settings file.
+
+The removed `.github\auto-release.yml` path has no fallback or alias, even when you select it explicitly. The bootstrap checks that path in the initial directory, before GitHub-Script starts. If the old file exists and you select the default path, startup fails. An existing custom file remains supported. If a custom file is missing and the old file exists, startup also fails.
+
+If the selected file and the old default file are both absent, valid standards and nonempty named inputs remain effective. A file-defined `WorkingDirectory` does not change file selection or the location of the old-file check.
 
 File selection and execution follow this order:
 
@@ -148,6 +152,7 @@ There is no reserved omission value. Nonempty inputs go through normal validatio
 The repository file must contain a mapping of supported settings. Every input in the table except `SettingsFilePath` is a valid file key. The file can contain only the settings that differ from the standards. Unknown keys, removed keys, null values, and invalid values fail before GitHub-Script starts. A valid override cannot hide an invalid lower layer.
 
 ```yaml
+# .github\release.settings.yml
 DatePrereleaseFormat: 'yyyyMMddHHmm'
 DefaultBump: patch
 IncrementalPrerelease: false
@@ -157,6 +162,13 @@ Verbose: true
 Version: '[0.43.0, 1.0.0)'
 Prerelease: false
 WorkingDirectory: '.'
+```
+
+For an intentional custom path:
+
+```yaml
+with:
+  SettingsFilePath: .github\custom-release.settings.yml
 ```
 
 For an invocation-specific minor bump, even when the repository configures major:

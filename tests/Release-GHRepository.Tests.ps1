@@ -334,6 +334,69 @@ WorkingDirectory: '.'
         { & $bootstrapPath } | Should -Throw '*Unsupported release setting*SettingsFilePath*'
         Test-Path -LiteralPath $env:GITHUB_OUTPUT | Should -BeFalse
     }
+
+    It 'loads the canonical file from <InitialDirectory> before execution-directory changes' -ForEach @(
+        @{ InitialDirectory = 'github.workspace'; ExplicitDirectory = $false }
+        @{ InitialDirectory = 'an explicit WorkingDirectory'; ExplicitDirectory = $true }
+    ) {
+        $initialDirectory = $workspace
+        if ($ExplicitDirectory) {
+            $initialDirectory = Join-Path -Path $workspace -ChildPath 'initial [directory]'
+            $null = New-Item -Path $initialDirectory -ItemType Directory
+            $env:PSMODULE_AUTO_RELEASE_INPUT_WorkingDirectory = 'initial [directory]'
+        }
+        $executionDirectory = Join-Path -Path $workspace -ChildPath 'execution [directory]'
+        $null = New-Item -Path (Join-Path -Path $initialDirectory -ChildPath '.github') -ItemType Directory
+        $null = New-Item -Path (Join-Path -Path $executionDirectory -ChildPath '.github') -ItemType Directory
+        @'
+WorkingDirectory: 'execution [directory]'
+Debug: true
+Verbose: true
+Version: '[0.43.1]'
+Prerelease: true
+DefaultBump: minor
+'@ | Set-Content -LiteralPath (Join-Path -Path $initialDirectory -ChildPath '.github\release.settings.yml')
+        'DefaultBump: invalid' |
+            Set-Content -LiteralPath (Join-Path -Path $executionDirectory -ChildPath '.github\release.settings.yml')
+        'DefaultBump: major' |
+            Set-Content -LiteralPath (Join-Path -Path $executionDirectory -ChildPath '.github\auto-release.yml')
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+
+        $settings = & $bootstrapPath
+
+        $settings.DefaultBump | Should -BeExactly 'minor'
+        $settings.DefaultBumpSource | Should -BeExactly 'RepositorySetting'
+        $outputs = & $readBootstrapOutputs -Path $env:GITHUB_OUTPUT
+        $outputs.Debug | Should -BeExactly 'true'
+        $outputs.Verbose | Should -BeExactly 'true'
+        $outputs.Version | Should -BeExactly '[0.43.1]'
+        $outputs.Prerelease | Should -BeExactly 'true'
+        if ($ExplicitDirectory) {
+            $outputs.WorkingDirectory | Should -BeExactly $initialDirectory
+        } else {
+            $outputs.WorkingDirectory | Should -BeExactly $executionDirectory
+        }
+    }
+
+    It 'rejects the legacy conventional file before a startup handoff when the new file is <FileState>' -ForEach @(
+        @{ FileState = 'absent'; NewFileExists = $false }
+        @{ FileState = 'present'; NewFileExists = $true }
+    ) {
+        $initialDirectory = Join-Path -Path $workspace -ChildPath 'initial [directory]'
+        $null = New-Item -Path (Join-Path -Path $initialDirectory -ChildPath '.github') -ItemType Directory
+        $env:PSMODULE_AUTO_RELEASE_INPUT_WorkingDirectory = 'initial [directory]'
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+        'DefaultBump: major' |
+            Set-Content -LiteralPath (Join-Path -Path $initialDirectory -ChildPath '.github\auto-release.yml')
+        if ($NewFileExists) {
+            'DefaultBump: minor' |
+                Set-Content -LiteralPath (Join-Path -Path $initialDirectory -ChildPath '.github\release.settings.yml')
+        }
+
+        { & $bootstrapPath } |
+            Should -Throw '*auto-release.yml*no longer supported*release.settings.yml*SettingsFilePath*'
+        Test-Path -LiteralPath $env:GITHUB_OUTPUT | Should -BeFalse
+    }
 }
 
 Describe 'Release-GHRepository caller compatibility' {
@@ -392,6 +455,11 @@ Describe 'Release-GHRepository caller compatibility' {
         }
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 
+        $callerDirectory = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N'))
+        $null = New-Item -Path (Join-Path -Path $callerDirectory -ChildPath '.github') -ItemType Directory
+        $env:GITHUB_WORKSPACE = $callerDirectory
+        Push-Location -LiteralPath $callerDirectory
+
         $releaseRecordsJson = '[{"tagName":"v2.0.3","isLatest":true,"isPrerelease":false}]'
         $simulateLabelWrites = $false
         Mock Install-PSResource {}
@@ -412,6 +480,7 @@ Describe 'Release-GHRepository caller compatibility' {
     }
 
     AfterEach {
+        Pop-Location
         foreach ($name in $environmentNames) {
             if ($null -eq $savedEnvironment[$name]) {
                 if (Test-Path -LiteralPath "Env:\$name") {
@@ -421,6 +490,199 @@ Describe 'Release-GHRepository caller compatibility' {
                 [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name])
             }
         }
+    }
+
+    It 'reads the declared default without an injected SettingsFilePath input' {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+        @'
+DefaultBump: minor
+WhatIf: true
+'@ | Set-Content -LiteralPath '.github\release.settings.yml'
+
+        $output = (& $runRelease 6>&1) -join "`n"
+
+        $output | Should -Match 'Reading settings file .*release\.settings\.yml'
+        $output | Should -Match 'Default bump:\s+\[minor\]'
+        $output | Should -Match 'Default bump source:\s+\[RepositorySetting\]'
+        $output | Should -Match 'gh release create v2\.1\.0 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'uses conventional-file policy when named inputs are omitted or blank' {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = ''
+        $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup = ''
+        $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix = ''
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = ''
+        @'
+DefaultBump: minor
+AutoCleanup: false
+VersionPrefix: ''
+DatePrereleaseFormat: ''
+WhatIf: true
+'@ | Set-Content -LiteralPath '.github\release.settings.yml'
+
+        $output = (& $runRelease 6>&1) -join "`n"
+
+        $output | Should -Match 'Reading settings file .*release\.settings\.yml'
+        $output | Should -Match 'Default bump:\s+\[minor\]'
+        $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
+        $output | Should -Match 'Version prefix:\s+\[\]'
+        $output | Should -Match 'Date-based prerelease format:\s+\[\]'
+        $output | Should -Match 'gh release create 2\.1\.0 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'inherits valid defaults when the conventional settings file is intentionally absent' {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+
+        $output = (& $runRelease 6>&1) -join "`n"
+
+        $output | Should -Match 'Settings file not found at .*release\.settings\.yml'
+        $output | Should -Match 'Default bump:\s+\[patch\]'
+        $output | Should -Match 'Default bump source:\s+\[SharedDefault\]'
+        $output | Should -Match 'gh release create v2\.0\.4 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'rejects legacy-only conventional settings instead of silently applying another policy' {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+        @'
+DefaultBump: major
+WhatIf: false
+'@ | Set-Content -LiteralPath '.github\auto-release.yml'
+
+        { & $runRelease } |
+            Should -Throw '*auto-release.yml*no longer supported*release.settings.yml*SettingsFilePath*'
+        Test-Path -LiteralPath $env:GITHUB_OUTPUT | Should -BeFalse
+        Should -Invoke gh -Times 0 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'rejects a legacy conventional file even when the new default file also exists' {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath = '.github\release.settings.yml'
+        'DefaultBump: major' | Set-Content -LiteralPath '.github\auto-release.yml'
+        'DefaultBump: minor' | Set-Content -LiteralPath '.github\release.settings.yml'
+
+        { & $runRelease } | Should -Throw '*auto-release.yml*no longer supported*release.settings.yml*'
+        Test-Path -LiteralPath $env:GITHUB_OUTPUT | Should -BeFalse
+        Should -Invoke gh -Times 0 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'rejects the removed conventional path even when explicitly supplied as <PathKind>' -ForEach @(
+        @{ PathKind = 'relative'; PathValue = '.github\auto-release.yml' }
+        @{ PathKind = 'normalized relative'; PathValue = '.github\..\.github\auto-release.yml' }
+        @{ PathKind = 'absolute'; PathValue = $null }
+    ) {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath = $PathValue
+        if ($PathKind -eq 'absolute') {
+            $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath = Join-Path -Path $callerDirectory -ChildPath '.github\auto-release.yml'
+        }
+        @'
+DefaultBump: major
+WhatIf: false
+'@ | Set-Content -LiteralPath '.github\auto-release.yml'
+
+        { & $runRelease } | Should -Throw '*auto-release.yml*no longer supported*release.settings.yml*'
+        Test-Path -LiteralPath $env:GITHUB_OUTPUT | Should -BeFalse
+        Should -Invoke gh -Times 0 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'preserves an intentional custom settings path without adding discovery or fallback' {
+        'DefaultBump: major' | Set-Content -LiteralPath '.github\auto-release.yml'
+        'DefaultBump: major' | Set-Content -LiteralPath '.github\release.settings.yml'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath = Join-Path -Path $callerDirectory -ChildPath 'custom.settings.yml'
+        @'
+DefaultBump: minor
+WhatIf: false
+'@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+        $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'true'
+
+        $output = (& $runRelease 6>&1) -join "`n"
+
+        $output | Should -Match 'Reading settings file .*custom\.settings\.yml'
+        $output | Should -Match 'Default bump:\s+\[minor\]'
+        $output | Should -Match 'gh release create v2\.1\.0 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'does not ignore legacy settings when an explicitly selected custom file is missing' {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath = 'missing.settings.yml'
+        'DefaultBump: major' | Set-Content -LiteralPath '.github\auto-release.yml'
+
+        { & $runRelease } | Should -Throw '*auto-release.yml*no longer supported*release.settings.yml*SettingsFilePath*'
+        Test-Path -LiteralPath $env:GITHUB_OUTPUT | Should -BeFalse
+        Should -Invoke gh -Times 0 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'applies an explicit standard-valued input before an owned bump' {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup = 'false'
+        @'
+DefaultBump: major
+AutoCleanup: true
+WhatIf: true
+'@ | Set-Content -LiteralPath '.github\release.settings.yml'
+        $githubEvent.pull_request.labels = @(@{ name = 'release:minor' })
+        $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+
+        $output = (& $runRelease 6>&1) -join "`n"
+
+        $output | Should -Match 'Reading settings file .*release\.settings\.yml'
+        $output | Should -Match 'Default bump:\s+\[patch\]'
+        $output | Should -Match 'Default bump source:\s+\[ActionInput\]'
+        $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
+        $output | Should -Match 'Bump source:\s+\[release:minor\]'
+        $output | Should -Match 'gh release create v2\.1\.0 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'keeps conventional-file text settings when named inputs are blank' {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+        $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix = ''
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = ''
+        @'
+DefaultBump: minor
+VersionPrefix: release-
+DatePrereleaseFormat: yyyyMMdd
+WhatIf: true
+'@ | Set-Content -LiteralPath '.github\release.settings.yml'
+
+        $output = (& $runRelease 6>&1) -join "`n"
+
+        $output | Should -Match 'Reading settings file .*release\.settings\.yml'
+        $output | Should -Match 'Version prefix:\s+\[release-\]'
+        $output | Should -Match 'Date-based prerelease format:\s+\[yyyyMMdd\]'
+        $output | Should -Match 'gh release create release-2\.1\.0 '
+        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'rejects invalid data in the new default file before contacting GitHub' -ForEach @(
+        @{ Yaml = 'DefaultBump: date'; Message = '*Invalid DefaultBump*' }
+        @{ Yaml = 'DefaultBump: null'; Message = '*DefaultBump*' }
+        @{ Yaml = 'WhatIf: invalid'; Message = '*WhatIf*true or false*' }
+        @{ Yaml = 'AutoPatching: false'; Message = '*AutoPatching*removed*' }
+        @{ Yaml = '- patch'; Message = '*configuration must be a mapping*' }
+        @{ Yaml = ''; Message = '*settings file*must be a mapping*' }
+    ) {
+        Remove-Item -LiteralPath Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+        $Yaml | Set-Content -LiteralPath '.github\release.settings.yml'
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
+
+        { & $runRelease } | Should -Throw $Message
+        Test-Path -LiteralPath $env:GITHUB_OUTPUT | Should -BeFalse
+        Should -Invoke gh -Times 0 -Exactly
+        Should -Invoke git -Times 0 -Exactly
     }
 
     It 'uses action standards without repository settings or injected input defaults' {
@@ -533,7 +795,7 @@ Describe 'Release-GHRepository caller compatibility' {
             ExpectedVersion = 'v2.0.4'
         }
     ) {
-        $defaultSettingsPath = '.github\auto-release.yml'
+        $defaultSettingsPath = '.github\release.settings.yml'
         $callerDirectory = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N'))
         $null = New-Item -Path (Join-Path -Path $callerDirectory -ChildPath '.github') -ItemType Directory
         if ($FilePresent) {
