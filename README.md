@@ -96,7 +96,7 @@ Select the full immutable commit SHA of an authorized, published release that su
 
 The `pull_request` workflow publishes only when the head branch is in the same repository. It checks out the base commit or the exact merged commit, not the pull request head.
 
-For a fork change that needs a prerelease, merge the fork pull request into a separate branch in the base repository first. Open a pull request from that branch and apply `release:prerelease`. The publishing job skips the fork pull request itself.
+The publishing job skips fork pull requests. To publish a prerelease for a fork change, review and approve the exact revision before merging the fork pull request into a separate branch in the base repository. Moving code to that branch does not replace review. Open a pull request from the reviewed branch and apply `release:prerelease`.
 
 ## Inputs
 
