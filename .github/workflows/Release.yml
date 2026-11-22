@@ -3,7 +3,7 @@ name: Release
 run-name: "Release - [${{ github.event.pull_request.title }} #${{ github.event.pull_request.number }}] by @${{ github.actor }}"
 
 on:
-  pull_request_target: # zizmor: ignore[dangerous-triggers] only trusted base or merged commits
+  pull_request:
     branches:
       - main
     types:
@@ -25,6 +25,7 @@ permissions:
 
 jobs:
   Release:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     steps:
       - name: Require the merge commit SHA
@@ -37,7 +38,7 @@ jobs:
         with:
           ref: >-
             ${{ github.event.action == 'closed' && github.event.pull_request.merged
-            && github.event.pull_request.merge_commit_sha || github.sha }}
+            && github.event.pull_request.merge_commit_sha || github.event.pull_request.base.sha }}
           persist-credentials: false
 
       - name: Release

@@ -50,7 +50,7 @@ This action is built on [GitHub-Script](https://github.com/PSModule/GitHub-Scrip
 name: Release-GHRepository
 
 on:
-  pull_request_target:
+  pull_request:
     branches:
       - main
     types:
@@ -72,6 +72,7 @@ permissions:
 
 jobs:
   Release-GHRepository:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-24.04
     steps:
       - name: Require the merge commit SHA
@@ -84,7 +85,7 @@ jobs:
         with:
           ref: >-
             ${{ github.event.action == 'closed' && github.event.pull_request.merged
-            && github.event.pull_request.merge_commit_sha || github.sha }}
+            && github.event.pull_request.merge_commit_sha || github.event.pull_request.base.sha }}
           persist-credentials: false
 
       - name: Release repository
@@ -93,7 +94,9 @@ jobs:
 
 Select the full immutable commit SHA of an authorized, published release that supports this contract. An open pull request's head is a development candidate, not a production dependency. A controlled major tag is an option only when the producer's release automation exclusively maintains it within its compatible stable line.
 
-The `pull_request_target` workflow checks out the trusted base commit or the exact merged commit. Do not check out or execute an untrusted pull request head with this writable token.
+The `pull_request` workflow publishes only when the head branch is in the same repository. It checks out the base commit or the exact merged commit, not the pull request head.
+
+For a fork change that needs a prerelease, merge the fork pull request into a separate branch in the base repository first. Open a pull request from that branch and apply `release:prerelease`. The publishing job skips the fork pull request itself.
 
 ## Inputs
 
