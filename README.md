@@ -62,7 +62,7 @@ on:
       - unlabeled
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.merged && github.event.pull_request.base.ref || github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.base.ref }}
   cancel-in-progress: false
 
 permissions:
