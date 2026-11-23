@@ -1,8 +1,8 @@
 # Release-GHRepository
 
-Create GitHub releases from owned pull-request labels and a configurable default bump.
+Create GitHub releases from pull request labels and repository settings.
 
-This action is for repository and workflow maintainers who publish GitHub releases through the `action.yml` input interface and version-controlled release settings.
+Repository and workflow maintainers can set the release policy in a GitHub Actions workflow or in the repository settings file.
 
 ## Release decision
 
@@ -16,9 +16,10 @@ Release-GHRepository owns and provisions five labels:
 | `release:prerelease` | Publish from an open pull request as a prerelease. | Alone or with exactly one bump label. |
 | `release:skip` | Validate without publishing a release. | Without another owned release label. |
 
-When no owned bump or skip label exists, `DefaultBump` selects `patch`, `minor`, or `major`. Its default is `patch`, preserving the automatic patch behavior from v2. An explicit `release:patch`, `release:minor`, or `release:major` label overrides `DefaultBump`.
+If the pull request has no bump or skip label from the table, the action uses `DefaultBump`.
+The default is `patch`. A `release:patch`, `release:minor`, or `release:major` label overrides `DefaultBump`.
 
-`release:prerelease` is a mode. It uses the explicit bump when one is present and otherwise uses `DefaultBump`. `release:skip` suppresses publication instead of applying the default.
+The `release:prerelease` label selects prerelease mode. The `release:skip` label prevents publication.
 
 The action rejects:
 
@@ -26,23 +27,31 @@ The action rejects:
 - multiple bump labels;
 - `release:skip` with another owned release label.
 
-Labels outside this set do not affect releases. Bare and legacy labels such as `Major`, `Minor`, `Patch`, `Prerelease`, `NoRelease`, `major`, `minor`, `patch`, and the retired `release:pre-release` are ignored, so a pull request carrying only those labels uses `DefaultBump`.
+The action ignores labels that are not in the table.
 
 ## How it works
 
-On a pull request run with `WhatIf: false`, the action creates missing owned labels and updates their colors and descriptions. It leaves all other labels unchanged. A run without a pull request does not update labels or publish releases.
+During a pull request run with `WhatIf: false`, the action creates missing owned labels.
+It sets the color and description of each owned label. It does not change other labels.
+If the event has no pull request, the action does not change labels or publish a release.
 
-An open pull request with `release:prerelease` publishes a prerelease from its explicit bump or `DefaultBump`. The prerelease name uses the head branch, while its tag targets the exact pull request head commit.
+The action publishes a prerelease for an open pull request with `release:prerelease`.
+The prerelease name uses the head branch name. The tag points to the exact pull request head commit.
 
-When a pull request merges into the default branch, the close event uses the resolved bump unless the pull request carries `release:skip`. The stable version tag points to the commit GitHub added to the default branch. For a squash merge, this is the squash commit, not the pull request head or a newer branch tip. The action does not move an existing version tag. After publication, it updates only the enabled major and minor tags to the same commit.
+When a pull request merges into the default branch, the action publishes a stable release unless the pull request has `release:skip`.
+The version tag points to the merge commit. For a squash merge, this is the squash commit.
+The action does not move an existing version tag. After publication, it sets each enabled major or minor tag to the same commit.
 
-A closed pull request cleans up its prereleases when `AutoCleanup` is enabled. `release:skip` prevents publication but does not stop cleanup on close.
+If `AutoCleanup` is `true`, the action deletes matching prereleases and their tags when the pull request closes.
+The `release:skip` label does not prevent cleanup.
 
-Cleanup uses the effective `VersionPrefix` to locate the version core, then matches the exact case-sensitive branch identifier. Version-like text in a prefix cannot select another branch's release. Empty and hyphenated prefixes remain valid. If you change the prefix, automatic cleanup retains releases under earlier prefixes. Close active prerelease series before a prefix change, or retain their releases for separate authorized cleanup.
+For cleanup, the action finds the version number after `VersionPrefix`. It then matches the exact, case-sensitive identifier for the head branch.
+The prefix can be empty or contain hyphens. If you change the prefix, cleanup does not remove prereleases that use the previous prefix.
 
-The workflow must run for `labeled` and `unlabeled` events so both valid and invalid label transitions are evaluated. Do not use a workflow path filter to bypass the release decision on non-artifact changes; use `release:skip`.
+Include the `labeled` and `unlabeled` events so the workflow checks the decision after a label change.
+Do not use a path filter to skip that decision. Apply `release:skip` when a change does not need a release.
 
-This action is built on [GitHub-Script](https://github.com/PSModule/GitHub-Script), which uses the workflow token by default.
+The action uses [GitHub-Script](https://github.com/PSModule/GitHub-Script), which uses the workflow token by default.
 
 ## Usage
 
@@ -92,15 +101,20 @@ jobs:
         uses: PSModule/Release-GHRepository@<released-commit-sha>
 ```
 
-Select the full immutable commit SHA of an authorized, published release that supports this contract. An open pull request's head is a development candidate, not a production dependency. A controlled major tag is an option only when the producer's release automation exclusively maintains it within its compatible stable line.
+Pin the action to the full commit SHA of a published release that supports these inputs.
+Do not use a pull request head in a production workflow.
+Use a moving major tag only if the producer's release automation controls it and moves it only to compatible stable releases in that major version.
 
-The `pull_request` workflow publishes only when the head branch is in the same repository. It checks out the base commit or the exact merged commit, not the pull request head.
+The example uses `pull_request`. The publishing job skips pull requests from forks.
+For a merge, it checks out the exact merge commit. For other events, it checks out the base commit, not the pull request head.
 
-The publishing job skips fork pull requests. To publish a prerelease for a fork change, review and approve the exact revision before merging the fork pull request into a separate branch in the base repository. Moving code to that branch does not replace review. Open a pull request from the reviewed branch and apply `release:prerelease`.
+If a fork contribution needs a prerelease, follow [Prerelease a fork contribution][fork-prerelease].
 
 ## Inputs
 
-Each setting has a matching named input and an effective standard in its description. One private schema in `action.yml` defines the types and standards, not a bundled settings file. All 16 file-configurable inputs have no concrete native defaults: omitted, null, and empty-string inputs retain file values. A supplied nonempty input overrides the file even when equal to a standard; explicit `false` remains an override. `SettingsFilePath` is a separate selector.
+`SettingsFilePath` selects the settings file. For the other inputs, a file value overrides the default.
+A nonempty input overrides the file value, even if the input equals the default. For Boolean settings, `false` overrides the file value.
+If you omit an input or supply `null` or an empty string, the action keeps the file value.
 
 | Name | Description | Effective default | Required |
 | --- | --- | --- | --- |
@@ -122,30 +136,35 @@ Each setting has a matching named input and an effective standard in its descrip
 | `Prerelease` | Allow a prerelease version of the GitHub module dependency. This does not select a repository prerelease. | `false` | false |
 | `WorkingDirectory` | Set the execution directory before GitHub-Script starts. Relative values use `github.workspace`. | `github.workspace` | false |
 
-Use the `release:prerelease` label to select repository prerelease behavior. The similarly named `Prerelease` action input only controls dependency resolution for the GitHub module used internally.
+Use `release:prerelease` to publish a repository prerelease. The `Prerelease` input only controls the GitHub module version.
 
 ### Settings file path
 
-The default repository settings file path is `.github\auto-release.yml`. Use `SettingsFilePath` to select a custom file. Omit this selector to use the default path; an empty or whitespace-only path is invalid. Literal paths with spaces or brackets are supported. A directory or a non-file-system provider is not a settings file. If the selected file is absent, valid standards and nonempty named inputs remain effective.
+Omit `SettingsFilePath` to select `.github\auto-release.yml`. To select a different file, supply its path.
+Use a file system path. It can contain spaces or brackets.
+Do not supply an empty path, a path that contains only white space, or a directory.
+If the file does not exist, the action uses the defaults and nonempty inputs.
 
 File selection and execution follow this order:
 
-1. Resolve a supplied nonempty `WorkingDirectory` input from `github.workspace`. Without that input, use `github.workspace` as the initial directory.
-2. Resolve a relative `SettingsFilePath` from that initial directory. An absolute selector keeps its literal path.
-3. Read the selected file once. Resolve each relative file-defined `WorkingDirectory` from `github.workspace`, not from the file's directory.
-4. Apply the private schema standards, the selected file, then known nonempty named inputs. Use the effective `WorkingDirectory` for execution without selecting another file.
+1. The action starts from `github.workspace` unless you supply a nonempty `WorkingDirectory` input. It resolves a relative `WorkingDirectory` from `github.workspace`.
+2. The action resolves a relative `SettingsFilePath` from that directory. It uses an absolute path as supplied.
+3. The action reads the file once. If the file specifies a relative `WorkingDirectory`, the action resolves it from `github.workspace`, not from the file's directory.
+4. The action applies the defaults from `action.yml`, then the file values, then nonempty inputs. It runs in the resulting `WorkingDirectory` without selecting another settings file.
 
-`src\Initialize-ReleaseConfiguration.ps1` resolves and validates all settings before GitHub-Script starts. It forwards `Debug`, `Verbose`, `WorkingDirectory`, `Version`, and `Prerelease` to that action. The release script receives the resolved policy and does not read or merge the file again. Every supplied directory must exist, even when a later input would override it.
+Use the input names in the table as YAML keys, except `SettingsFilePath`. The file must contain a YAML mapping.
+The action checks the defaults, the file values, and all nonempty inputs before GitHub-Script starts.
+It rejects unknown keys, null file values, and invalid values, even if a later input would override them.
+Each specified working directory must exist.
 
-The bootstrap reads the private schema, not description prose. There is no bundled defaults asset or input-presence heuristic. An owned bump label overrides the valid effective `DefaultBump`. The action reports whether the bump comes from an owned label, a named input, a repository setting, or the shared standard.
+For Boolean settings, use `true` or `false`. You can also use these words as strings in any letter case. Do not add spaces.
+The action accepts text values as written. Use a value from the table for `DefaultBump`.
 
-The runner does not expose its original caller-supplied key list to a composite action after it merges native defaults. A concrete native default would make omission indistinguishable from an explicitly supplied equal value. For example, with file policy `DefaultBump: major`, omitting the input retains major; supplying `DefaultBump: patch` deliberately overrides it. The action never detects presence by comparing values with a standard.
+The action reports the source of the bump: a label, an input, a file value, or the default.
+For example, if the file sets `DefaultBump: major`, omit the input to use `major`. Set the `DefaultBump` input to `patch` to use `patch`.
 
-The runner represents both omitted and explicitly empty composite inputs as empty text. Both mean no override for file-configurable settings. Empty inputs cannot clear text configured in a file. Set `VersionPrefix: ''` or `DatePrereleaseFormat: ''` in the file to remove the prefix or date suffix. Set `Version: ''` in the file to select the latest GitHub dependency.
-
-There is no reserved omission value. Nonempty inputs go through normal validation, including whitespace. Booleans accept YAML `true` and `false` or case-insensitive strings containing exactly `true` or `false`; whitespace-only booleans and bumps are invalid. Text values remain literal strings. Every file layer is validated, so valid named inputs or owned labels cannot hide invalid standards or repository settings.
-
-The repository file must contain a mapping of supported settings. Every input in the table except `SettingsFilePath` is a valid file key. The file can contain only the settings that differ from the standards. Unknown keys, removed keys, null values, and invalid values fail before GitHub-Script starts. A valid override cannot hide an invalid lower layer.
+To remove the prefix or date suffix, set `VersionPrefix: ''` or `DatePrereleaseFormat: ''` in the file.
+To use the latest version of the GitHub module, set `Version: ''` in the file.
 
 ```yaml
 DatePrereleaseFormat: 'yyyyMMddHHmm'
@@ -159,7 +178,7 @@ Prerelease: false
 WorkingDirectory: '.'
 ```
 
-For an invocation-specific minor bump, even when the repository configures major:
+To use a minor bump and turn off cleanup for one run:
 
 ```yaml
 with:
@@ -167,7 +186,7 @@ with:
   AutoCleanup: false
 ```
 
-To select a custom settings file, inherit its bump, and force a read-only invocation:
+To use a custom settings file and run without changing the repository:
 
 ```yaml
 with:
@@ -175,23 +194,26 @@ with:
   WhatIf: true
 ```
 
-`DatePrereleaseFormat` formats only the existing prerelease suffix. `DefaultBump` does not support date versioning or a disabled automatic bump. Use `release:skip` when validation must succeed without publication.
+## Upgrade the action
 
-## Release records
-
-The release-bound pull request's title and complete body contain the incremental adoption instructions, changed consumer interfaces, verification evidence, and resolved release decision. Compose those records across the release range you adopt; repository guides do not replace them.
-
-The [owned-label release record](https://github.com/PSModule/Release-GHRepository/pull/109) contains the caller migration and publisher bootstrap requirements for this contract.
+Use the [MSX consumer upgrade procedure][consumer-upgrades] to plan the upgrade.
+Read the [release notes][release-notes] for each release after the one you use, through the release you plan to use.
 
 ## Contributing
 
-Follow the [MSX coding standards](https://msxorg.github.io/docs/Coding-Standards/) and [contribution workflow](https://msxorg.github.io/docs/Ways-of-Working/Contribution-Workflow/). Keep release-decision changes separate from changes to stable-publication authority and recovery.
+Follow the [MSX coding standards](https://msxorg.github.io/docs/Coding-Standards/) and [contribution workflow](https://msxorg.github.io/docs/Ways-of-Working/Contribution-Workflow/).
 
-For the credential-free local loop, use PowerShell 7 with Pester 6.1.0, powershell-yaml 0.4.12, PSSemVer 1.1.10, and the GitHub module installed:
+Run the local tests with PowerShell 7, Pester 6.1.0, powershell-yaml 0.4.12, PSSemVer 1.1.10, and the GitHub module.
+The tests do not need GitHub credentials.
 
 ```powershell
 Import-Module -Name Pester -RequiredVersion 6.1.0
 Invoke-Pester -Path .\tests
 ```
 
-Tests use the real bootstrap, resolver, YAML parser, and version library. Controller tests simulate GitHub responses and guard publication commands; they do not establish live API or permission behavior. The read-only caller job uses the actual composite with `WhatIf: true`. Neither check establishes live publication or concurrency contention.
+The tests run the settings and version code. They simulate GitHub responses and prevent repository writes.
+The caller job runs the composite action with `WhatIf: true`. These checks do not verify live publication or concurrent release runs.
+
+[fork-prerelease]: https://msx.no/docs/Capabilities/release-management/design/#prerelease-a-fork-contribution
+[consumer-upgrades]: https://msx.no/docs/Ways-of-Working/Consumer-Upgrades/
+[release-notes]: https://github.com/PSModule/Release-GHRepository/releases
