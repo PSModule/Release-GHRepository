@@ -19,9 +19,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write # Required to create releases
-  issues: write # Required to provision release labels
-  pull-requests: write # Required to create comments on the PRs
+  contents: write # Create releases and tags
+  pull-requests: write # Manage release labels and comment on pull requests
 
 jobs:
   Release:

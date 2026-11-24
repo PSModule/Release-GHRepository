@@ -53,12 +53,11 @@ The `release:skip` label does not prevent cleanup.
 For cleanup, the action finds the version number after `VersionPrefix`. It then matches the exact, case-sensitive identifier for the head branch.
 The prefix can be empty or contain hyphens. If you change the prefix, cleanup does not remove prereleases that use the previous prefix.
 
-Include the `labeled` and `unlabeled` events so the read-only release decision check runs after a label change.
-Do not use a path filter to skip the check. Apply `release:skip` when a change does not need a release.
-
 The action uses [GitHub-Script](https://github.com/PSModule/GitHub-Script), which uses the workflow token by default.
 
 ## Usage
+
+This example shows the publishing job.
 
 ```yaml
 name: Release-GHRepository
@@ -80,9 +79,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write # Required to create releases and tags
-  issues: write # Required to provision repository labels
-  pull-requests: write # Required to comment on pull requests
+  contents: write # Create releases and tags
+  pull-requests: write # Manage release labels and comment on pull requests
 
 jobs:
   Release-GHRepository:
@@ -113,7 +111,11 @@ Use a moving major tag only if the producer's release automation controls it and
 The example uses `pull_request`. The publishing job skips pull requests from forks, including on merge.
 For a merge, it checks out the exact merge commit. For other events, it checks out the base commit, not the pull request head.
 
-To validate a fork pull request, use a separate job with read-only permissions and `WhatIf: true`.
+Run the [required release decision check][release-decision-check] in a separate job with read-only permissions and `WhatIf: true`.
+Include `labeled` and `unlabeled` so the check runs when a label changes.
+Do not use a path filter to skip the check. Apply `release:skip` when a change does not need a release.
+
+Use the read-only check for fork pull requests.
 If a fork contribution needs a prerelease, follow [Prerelease a fork contribution][fork-prerelease].
 
 ## Inputs
@@ -148,7 +150,7 @@ Use `release:prerelease` to publish a repository prerelease. The `Prerelease` in
 
 Omit `SettingsFilePath` to select `.github\auto-release.yml`. To select a different file, supply its path.
 Use a file system path. It can contain spaces or brackets.
-Do not supply an empty path, a path that contains only white space, or a directory.
+Do not supply an empty path, a path that contains only whitespace, or a directory.
 If the file does not exist, the action uses the defaults and nonempty inputs.
 
 File selection and execution follow this order:
@@ -204,7 +206,7 @@ with:
 
 Use the [MSX consumer upgrade procedure][consumer-upgrades] to plan the upgrade.
 Read the [release notes][release-notes] for each applicable release after the one your workflow uses, through the target release.
-Apply the required changes to your workflow, settings, and label rules in the same change as the new pin.
+Apply only the changes that affect your repository. Update the action pin and make those changes in the same pull request.
 
 ## Contributing
 
@@ -222,6 +224,7 @@ The tests run the settings and version code. They simulate GitHub responses and 
 The caller job runs the composite action with `WhatIf: true`. These checks do not verify live publication or concurrent release runs.
 
 [automation-labels]: https://msx.no/docs/Ways-of-Working/Automation-Labels/#namespacing
+[release-decision-check]: https://msx.no/docs/Capabilities/release-management/design/#required-pre-merge-decision-check
 [fork-prerelease]: https://msx.no/docs/Capabilities/release-management/design/#prerelease-a-fork-contribution
 [consumer-upgrades]: https://msx.no/docs/Ways-of-Working/Consumer-Upgrades/
 [release-notes]: https://github.com/PSModule/Release-GHRepository/releases
