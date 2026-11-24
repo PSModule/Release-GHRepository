@@ -36,11 +36,14 @@ It sets the color and description of each owned label. It does not change other 
 If the event has no pull request, the action does not change labels or publish a release.
 
 The action publishes a prerelease for an open pull request with `release:prerelease`.
-The prerelease name uses the head branch name. The tag points to the exact pull request head commit.
+The prerelease name uses the head branch name. When the tag does not exist, the action creates it at the exact pull request head commit.
 
-When a pull request merges into the default branch, the action publishes a stable release unless the pull request has `release:skip`.
+A publishing run creates a stable release on a merge into the default branch unless the pull request has `release:skip`.
 The version tag points to the merge commit. For a squash merge, this is the squash commit.
 The action does not move an existing version tag. After publication, it sets each enabled major or minor tag to the same commit.
+
+By default, the release notes start with the pull request title and number, followed by the full pull request description.
+Put release-specific upgrade instructions in that description.
 
 If `AutoCleanup` is `true`, the action deletes matching prereleases and their tags when the pull request closes.
 The `release:skip` label does not prevent cleanup.
@@ -48,8 +51,8 @@ The `release:skip` label does not prevent cleanup.
 For cleanup, the action finds the version number after `VersionPrefix`. It then matches the exact, case-sensitive identifier for the head branch.
 The prefix can be empty or contain hyphens. If you change the prefix, cleanup does not remove prereleases that use the previous prefix.
 
-Include the `labeled` and `unlabeled` events so the workflow checks the decision after a label change.
-Do not use a path filter to skip that decision. Apply `release:skip` when a change does not need a release.
+Include the `labeled` and `unlabeled` events so the read-only release decision check runs after a label change.
+Do not use a path filter to skip the check. Apply `release:skip` when a change does not need a release.
 
 The action uses [GitHub-Script](https://github.com/PSModule/GitHub-Script), which uses the workflow token by default.
 
@@ -105,9 +108,10 @@ Pin the action to the full commit SHA of a published release that supports these
 Do not use a pull request head in a production workflow.
 Use a moving major tag only if the producer's release automation controls it and moves it only to compatible stable releases in that major version.
 
-The example uses `pull_request`. The publishing job skips pull requests from forks.
+The example uses `pull_request`. The publishing job skips pull requests from forks, including on merge.
 For a merge, it checks out the exact merge commit. For other events, it checks out the base commit, not the pull request head.
 
+To validate a fork pull request, use a separate job with read-only permissions and `WhatIf: true`.
 If a fork contribution needs a prerelease, follow [Prerelease a fork contribution][fork-prerelease].
 
 ## Inputs
@@ -124,7 +128,7 @@ If you omit an input or supply `null` or an empty string, the action keeps the f
 | `CreateMajorTag` | Create or update the floating major tag after a stable release. | `true` | false |
 | `CreateMinorTag` | Create or update the floating minor tag after a stable release. | `true` | false |
 | `DatePrereleaseFormat` | Append a [.NET date and time format](https://learn.microsoft.com/en-us/dotnet/standard/base-types/standard-date-and-time-format-strings) to prerelease versions. | `''` | false |
-| `IncrementalPrerelease` | Increment the prerelease number; when false, keep only one prerelease for the branch. | `true` | false |
+| `IncrementalPrerelease` | Enable prerelease numbering. When false, replace a release that has the same calculated prerelease tag. | `true` | false |
 | `UsePRTitleAsReleaseName` | Use the pull-request title as the GitHub Release name. | `false` | false |
 | `UsePRBodyAsReleaseNotes` | Use the pull-request body as release notes. | `true` | false |
 | `UsePRTitleAsNotesHeading` | Add the pull-request title and number as the release-notes heading. | `true` | false |
@@ -197,7 +201,8 @@ with:
 ## Upgrade the action
 
 Use the [MSX consumer upgrade procedure][consumer-upgrades] to plan the upgrade.
-Read the [release notes][release-notes] for each release after the one you use, through the release you plan to use.
+Read the [release notes][release-notes] for each applicable release after the one your workflow uses, through the target release.
+Apply the required changes to your workflow, settings, and label rules in the same change as the new pin.
 
 ## Contributing
 
