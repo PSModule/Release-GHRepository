@@ -650,7 +650,7 @@ VersionPrefix: ''
         Should -Invoke gh -Times 2 -Exactly
     }
 
-    It 'lets an explicit owned major override a file minor default and preserves the complete record' {
+    It 'lets release:major override a file minor default and preserves the complete record' {
         'DefaultBump: minor' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $githubEvent.pull_request.labels = @(@{ name = 'release:major' }, @{ name = 'dependencies' })
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
@@ -1053,7 +1053,7 @@ Version: '[0.43.0, 1.0.0)'
         Should -Invoke Write-GitHubWarning -Times 1 -Exactly
     }
 
-    It 'rejects conflicting owned labels instead of falling back to the default' {
+    It 'rejects conflicting release labels instead of falling back to the default' {
         $githubEvent.pull_request.labels = @(@{ name = 'release:patch' }, @{ name = 'release:major' })
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 

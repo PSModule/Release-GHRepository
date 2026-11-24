@@ -6,7 +6,9 @@ Repository and workflow maintainers can set the release policy in a GitHub Actio
 
 ## Release decision
 
-Release-GHRepository owns and provisions five labels:
+Release-GHRepository manages five [namespaced release labels][automation-labels].
+Each name uses the format `<namespace>:<qualifier>`.
+The namespace is `release`. The qualifier selects the release instruction.
 
 | Label | Instruction | Valid combination |
 | --- | --- | --- |
@@ -14,7 +16,7 @@ Release-GHRepository owns and provisions five labels:
 | `release:minor` | Increment the minor version. | Exactly one bump label. |
 | `release:major` | Increment the major version. | Exactly one bump label. |
 | `release:prerelease` | Publish from an open pull request as a prerelease. | Alone or with exactly one bump label. |
-| `release:skip` | Validate without publishing a release. | Without another owned release label. |
+| `release:skip` | Validate without publishing a release. | Without another label from the table. |
 
 If the pull request has no bump or skip label from the table, the action uses `DefaultBump`.
 The default is `patch`. A `release:patch`, `release:minor`, or `release:major` label overrides `DefaultBump`.
@@ -25,14 +27,14 @@ The action rejects:
 
 - a `DefaultBump` value other than exactly `patch`, `minor`, or `major`;
 - multiple bump labels;
-- `release:skip` with another owned release label.
+- `release:skip` with another label from the table.
 
 The action ignores labels that are not in the table.
 
 ## How it works
 
-During a pull request run with `WhatIf: false`, the action creates missing owned labels.
-It sets the color and description of each owned label. It does not change other labels.
+During a pull request run with `WhatIf: false`, the action creates missing labels from the table.
+It sets their colors and descriptions. It leaves all other labels unchanged.
 If the event has no pull request, the action does not change labels or publish a release.
 
 The action publishes a prerelease for an open pull request with `release:prerelease`.
@@ -219,6 +221,7 @@ Invoke-Pester -Path .\tests
 The tests run the settings and version code. They simulate GitHub responses and prevent repository writes.
 The caller job runs the composite action with `WhatIf: true`. These checks do not verify live publication or concurrent release runs.
 
+[automation-labels]: https://msx.no/docs/Ways-of-Working/Automation-Labels/#namespacing
 [fork-prerelease]: https://msx.no/docs/Capabilities/release-management/design/#prerelease-a-fork-contribution
 [consumer-upgrades]: https://msx.no/docs/Ways-of-Working/Consumer-Upgrades/
 [release-notes]: https://github.com/PSModule/Release-GHRepository/releases

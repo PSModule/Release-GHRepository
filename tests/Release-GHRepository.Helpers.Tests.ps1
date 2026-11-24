@@ -146,7 +146,7 @@ Describe 'Resolve-ReleaseConfiguration' {
         $configuration.Count | Should -Be 3
     }
 
-    It 'lets an owned bump override the effective configured default' {
+    It 'lets release:minor override the effective configured default' {
         $result = Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ DefaultBump = 'major' }
         $decision = Resolve-ReleaseDecision -Labels @('release:minor') -DefaultBump $result.DefaultBump
 
@@ -726,8 +726,8 @@ Describe 'Resolve-ReleaseDecision' {
     }
 
     It 'requires resolved policy even with <LabelState>' -ForEach @(
-        @{ LabelState = 'no owned label'; Labels = @() }
-        @{ LabelState = 'an owned major label'; Labels = @('release:major') }
+        @{ LabelState = 'no release label'; Labels = @() }
+        @{ LabelState = 'release:major'; Labels = @('release:major') }
     ) {
         { Resolve-ReleaseDecision -Labels $Labels } | Should -Throw '*Invalid DefaultBump*'
     }
@@ -849,7 +849,7 @@ Describe 'Resolve-ReleaseDecision' {
     }
 
     It 'accepts exactly the nine valid subsets for every default bump' {
-        $ownedLabels = @(
+        $supportedReleaseLabels = @(
             'release:patch'
             'release:minor'
             'release:major'
@@ -869,11 +869,11 @@ Describe 'Resolve-ReleaseDecision' {
         )
 
         foreach ($defaultBump in @('patch', 'minor', 'major')) {
-            for ($mask = 0; $mask -lt (1 -shl $ownedLabels.Count); $mask++) {
+            for ($mask = 0; $mask -lt (1 -shl $supportedReleaseLabels.Count); $mask++) {
                 $labels = @(
-                    for ($index = 0; $index -lt $ownedLabels.Count; $index++) {
+                    for ($index = 0; $index -lt $supportedReleaseLabels.Count; $index++) {
                         if (($mask -band (1 -shl $index)) -ne 0) {
-                            $ownedLabels[$index]
+                            $supportedReleaseLabels[$index]
                         }
                     }
                 )

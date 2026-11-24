@@ -313,7 +313,7 @@ function Resolve-ReleaseConfiguration {
         }
         foreach ($name in $layer.Values.Keys) {
             if ($retiredSettings -contains $name) {
-                throw "Release setting [$name] was removed. Use DefaultBump and the owned release: labels."
+                throw "Release setting [$name] was removed. Use DefaultBump and the release: labels defined by this action."
             }
             if ($Metadata.Keys -notcontains $name) {
                 throw "Unsupported release setting [$name]. Use the documented release settings."
@@ -344,11 +344,10 @@ function Resolve-ReleaseConfiguration {
 function Get-ReleaseLabelDefinition {
     <#
         .SYNOPSIS
-        Return the canonical release labels owned by Release-GHRepository.
+        Return the namespaced release labels that Release-GHRepository manages.
 
         .DESCRIPTION
-        Return the canonical label names and repository metadata used when the action
-        provisions its owned release controls.
+        Return the name, color, and description for each supported release label.
 
         .EXAMPLE
         Get-ReleaseLabelDefinition
@@ -517,11 +516,11 @@ function Resolve-ReleaseDecision {
         Resolve a release decision from canonical pull-request labels.
 
         .DESCRIPTION
-        Evaluate only the five labels owned by Release-GHRepository. An explicit
-        bump label overrides DefaultBump, release:prerelease selects prerelease
-        mode, and release:skip suppresses publication. Reject conflicting owned-label
-        combinations. Require the validated effective DefaultBump; this pure
-        helper does not load standards or choose an automatic policy.
+        Evaluate only the five namespaced release labels that the action defines.
+        An explicit bump label overrides DefaultBump. The release:prerelease label
+        selects prerelease mode. The release:skip label prevents publication.
+        Reject conflicting release labels. Require the validated effective
+        DefaultBump instead of loading standards or choosing a policy.
 
         .EXAMPLE
         Resolve-ReleaseDecision -Labels @('release:minor') -DefaultBump 'major'
@@ -575,23 +574,23 @@ function Resolve-ReleaseDecision {
         'release:minor' = 'Minor'
         'release:major' = 'Major'
     }
-    $ownedLabelNames = @($bumpLabelTypes.Keys) + @('release:prerelease', 'release:skip')
-    $ownedLabels = [System.Collections.Generic.HashSet[string]]::new(
+    $supportedLabelNames = @($bumpLabelTypes.Keys) + @('release:prerelease', 'release:skip')
+    $appliedReleaseLabels = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::Ordinal
     )
 
     foreach ($label in $Labels) {
-        if ($ownedLabelNames -ccontains $label) {
-            $null = $ownedLabels.Add($label)
+        if ($supportedLabelNames -ccontains $label) {
+            $null = $appliedReleaseLabels.Add($label)
         }
     }
 
-    $hasSkip = $ownedLabels.Contains('release:skip')
-    $hasPrerelease = $ownedLabels.Contains('release:prerelease')
-    $bumpLabels = @($bumpLabelTypes.Keys | Where-Object { $ownedLabels.Contains($_) })
+    $hasSkip = $appliedReleaseLabels.Contains('release:skip')
+    $hasPrerelease = $appliedReleaseLabels.Contains('release:prerelease')
+    $bumpLabels = @($bumpLabelTypes.Keys | Where-Object { $appliedReleaseLabels.Contains($_) })
 
     if ($hasSkip) {
-        if ($ownedLabels.Count -ne 1) {
+        if ($appliedReleaseLabels.Count -ne 1) {
             throw 'Invalid release labels: release:skip must not be combined with another release label.'
         }
 

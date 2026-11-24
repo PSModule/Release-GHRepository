@@ -1,5 +1,5 @@
 name: Release GHRepository (by PSModule)
-description: Creates GitHub releases from owned pull-request labels and effective release settings.
+description: Creates GitHub releases from namespaced pull request labels and release settings.
 author: PSModule
 branding:
   icon: upload-cloud
@@ -19,7 +19,8 @@ inputs:
     default: .github\auto-release.yml
   DefaultBump:
     description: >-
-      The release bump without an owned bump or skip label. Accepts exactly patch, minor, or major.
+      The bump when the pull request has neither a supported bump label nor release:skip.
+      Accepts exactly patch, minor, or major.
       Effective standard default: patch. Omit or leave empty to follow repository policy.
     required: false
   CreateMajorTag:
