@@ -94,6 +94,8 @@ Describe 'Resolve-ReleaseConfiguration' {
     It 'applies every documented controller default when settings are omitted' {
         $result = Resolve-ReleaseConfiguration @resolveConfiguration
         $expected = [ordered]@{
+            Mode                     = 'publish'
+            PullRequest              = ''
             AutoCleanup              = $true
             DefaultBump              = 'none'
             CreateMajorTag           = $true
