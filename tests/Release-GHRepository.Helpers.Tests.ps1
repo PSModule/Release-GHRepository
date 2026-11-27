@@ -284,7 +284,12 @@ Describe 'Resolve-ReleaseConfiguration' {
 
     It 'lets a caller supply a bump when the settings file selects none' {
         $result = Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ DefaultBump = 'none' } -Inputs @{ DefaultBump = 'minor' }
-        $decision = Resolve-ReleaseDecision -Labels @('release:prerelease') -DefaultBump $result.DefaultBump -DefaultBumpSource $result.DefaultBumpSource
+        $decisionParameters = @{
+            Labels            = @('release:prerelease')
+            DefaultBump       = $result.DefaultBump
+            DefaultBumpSource = $result.DefaultBumpSource
+        }
+        $decision = Resolve-ReleaseDecision @decisionParameters
 
         $decision.Bump | Should -BeExactly 'Minor'
         $decision.BumpSource | Should -BeExactly 'ActionInput'
