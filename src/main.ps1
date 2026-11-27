@@ -42,6 +42,19 @@ LogGroup 'Loading libraries' {
     }
 }
 
+if ($releaseSettings.Mode -ceq 'calculate') {
+    $calculatePath = Join-Path -Path $PSScriptRoot -ChildPath 'Calculate-Release.ps1'
+    $plan = & $calculatePath -Settings $releaseSettings
+    Set-GitHubOutput -Name Decision -Value $plan.Decision
+    if ($plan.Decision -ceq 'release') {
+        Set-GitHubOutput -Name ReleaseVersion -Value $plan.ReleaseVersion
+        if ($plan.CalculatedAt) {
+            Set-GitHubOutput -Name CalculatedAt -Value $plan.CalculatedAt
+        }
+    }
+    return
+}
+
 LogGroup 'Set configuration' {
     $autoCleanup = $releaseSettings.AutoCleanup
     $defaultBump = $releaseSettings.DefaultBump

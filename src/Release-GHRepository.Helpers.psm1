@@ -46,6 +46,7 @@ function Get-ReleaseSettingSchema {
     if ($metadata -isnot [System.Collections.IDictionary]) {
         throw 'The action release standards must be a mapping of setting definitions.'
     }
+    $validTypes = @('Boolean', 'Text', 'Bump', 'DateTimeFormat', 'VersionConstraint', 'DirectoryPath', 'ReleaseMode', 'PullRequestSelector')
     $settingNames = @($actionDefinition.inputs.Keys | Where-Object { $_ -ne 'SettingsFilePath' })
     foreach ($name in $settingNames) {
         if ($metadata.Keys -notcontains $name) {
@@ -62,7 +63,7 @@ function Get-ReleaseSettingSchema {
             $definition.Keys -notcontains 'Phase' -or $definition.Count -ne 3) {
             throw "Invalid metadata for release setting [$name]. Supply Type, Default, and Phase."
         }
-        if (@('Boolean', 'Text', 'Bump', 'DateTimeFormat', 'VersionConstraint', 'DirectoryPath') -cnotcontains $definition.Type) {
+        if ($validTypes -cnotcontains $definition.Type) {
             throw "Invalid metadata type for release setting [$name]."
         }
         if (@('Startup', 'Release') -cnotcontains $definition.Phase) {
@@ -179,7 +180,7 @@ function ConvertTo-ReleaseSettingValue {
 
         # The type supplied by the action's private schema.
         [Parameter(Mandatory)]
-        [ValidateSet('Boolean', 'Text', 'Bump', 'DateTimeFormat', 'VersionConstraint', 'DirectoryPath')]
+        [ValidateSet('Boolean', 'Text', 'Bump', 'DateTimeFormat', 'VersionConstraint', 'DirectoryPath', 'ReleaseMode', 'PullRequestSelector')]
         [string] $Type,
 
         # The supplied value, including null so invalid values can be diagnosed.
@@ -209,6 +210,16 @@ function ConvertTo-ReleaseSettingValue {
     }
     if ($Type -eq 'Bump') {
         $null = ConvertTo-ReleaseBump -DefaultBump $Value
+    }
+    if ($Type -eq 'ReleaseMode' -and $Value -cnotin @('publish', 'calculate')) {
+        throw 'Invalid Mode. Use exactly publish or calculate.'
+    }
+    if ($Type -eq 'PullRequestSelector' -and $Value) {
+        $selectorPattern = '\A[A-Za-z0-9][A-Za-z0-9-]*/(?!\.{1,2}#)[A-Za-z0-9_.-]+#(?<Number>[1-9][0-9]*)\z'
+        $number = 0
+        if ($Value -cnotmatch $selectorPattern -or -not [int]::TryParse($Matches.Number, [ref] $number)) {
+            throw 'Invalid PullRequest. Use OWNER/REPO#NUMBER with a positive pull request number.'
+        }
     }
     if ($Type -eq 'DateTimeFormat' -and -not [string]::IsNullOrEmpty($Value)) {
         try {
@@ -337,6 +348,9 @@ function Resolve-ReleaseConfiguration {
     }
 
     $null = ConvertTo-ReleaseBump -DefaultBump $settings.DefaultBump
+    if ($settings.PullRequest -and $settings.Mode -cne 'calculate') {
+        throw 'PullRequest requires Mode: calculate.'
+    }
     $settings.DefaultBumpSource = $defaultBumpSource
     [PSCustomObject] $settings
 }
@@ -806,15 +820,22 @@ function Get-ReleaseVersionPlan {
     $baseline = $BaselineTag
     $versionPrefix = [string] $Settings.VersionPrefix
     if (-not $Legacy -and $baseline) {
-        if ($versionPrefix -and $baseline.StartsWith($versionPrefix, [StringComparison]::Ordinal) -and
-            $baseline.Substring($versionPrefix.Length) -cmatch '\A[0-9]') {
-            $baseline = $baseline.Substring($versionPrefix.Length)
-        } else {
-            $baseline = $baseline -creplace '\A[A-Za-z]+'
+        $baselineCandidates = @(
+            if ($versionPrefix -and $BaselineTag.StartsWith($versionPrefix, [StringComparison]::Ordinal)) {
+                $BaselineTag.Substring($versionPrefix.Length)
+            }
+            $BaselineTag -creplace '\A[A-Za-z]+'
+        )
+        $baseline = $null
+        foreach ($candidate in $baselineCandidates) {
+            $parsed = $null
+            if ([semver]::TryParse($candidate, [ref] $parsed) -and -not $parsed.PrereleaseLabel -and
+                $parsed.ToString() -ceq $candidate) {
+                $baseline = $candidate
+                break
+            }
         }
-        $parsed = $null
-        if (-not [semver]::TryParse($baseline, [ref] $parsed) -or $parsed.PrereleaseLabel -or
-            $parsed.ToString() -cne $baseline) {
+        if ($null -eq $baseline) {
             throw "Invalid release baseline [$BaselineTag]. Use a stable SemVer release tag."
         }
     }

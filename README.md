@@ -1,6 +1,6 @@
 # Release-GHRepository
 
-Create GitHub releases from pull request labels and repository settings.
+Calculate versions and create GitHub releases from pull request labels and repository settings.
 
 Repository and workflow maintainers can set the release policy in a GitHub Actions workflow or in the repository settings file.
 
@@ -22,7 +22,8 @@ If the pull request has no bump or skip label from the table, the action uses `D
 Without a configured bump, the effective value is `none`. Apply one bump label or `release:skip`.
 A `release:patch`, `release:minor`, or `release:major` label overrides `DefaultBump`.
 
-The `release:prerelease` label selects prerelease mode. The `release:skip` label prevents publication.
+The `release:prerelease` label permits prerelease publication. It is not necessary to calculate a prerelease version.
+The `release:skip` label prevents publication.
 
 The action rejects:
 
@@ -35,7 +36,7 @@ The action ignores labels that are not in the table.
 
 ## How it works
 
-During a pull request run with `WhatIf: false`, the action creates missing labels from the table.
+In `publish` mode during a pull request run with `WhatIf: false`, the action creates missing labels from the table.
 It sets their colors and descriptions. It leaves all other labels unchanged.
 If the event has no pull request, the action does not change labels or publish a release.
 
@@ -113,12 +114,40 @@ Use a moving major tag only if the producer's release automation controls it and
 The example uses `pull_request`. The publishing job skips pull requests from forks, including on merge.
 For a merge, it checks out the exact merge commit. For other events, it checks out the base commit, not the pull request head.
 
-Run the [required release decision check][release-decision-check] in a separate job with read-only permissions and `WhatIf: true`.
-Include `labeled` and `unlabeled` so the check runs when a label changes.
-Do not use a path filter to skip the check. Apply `release:skip` when a change does not need a release.
+### Calculate a version
 
-Use the read-only check for fork pull requests.
-If a fork contribution needs a prerelease, follow [Prerelease a fork contribution][fork-prerelease].
+Use `Mode: calculate` to validate a release decision and get a version without publishing.
+The action does not change releases, tags, labels, or comments in this mode, even when `WhatIf` is `false`.
+Use a workflow token that can read contents and pull requests in the target repository.
+
+```yaml
+- name: Calculate the release version
+  id: calculate
+  uses: PSModule/Release-GHRepository@<released-commit-sha>
+  with:
+    Mode: calculate
+```
+
+On `pull_request`, the action calculates a prerelease for the current open pull request.
+On a branch push other than a push to the target repository's default branch, it also calculates a prerelease.
+The open pull request must match the source repository, branch name, and exact pushed commit.
+The `release:prerelease` label is not necessary in either case.
+If more than one pull request matches, set `PullRequest` to the target `OWNER/REPO#NUMBER`.
+For a push in a fork, always set `PullRequest`.
+The action checks the selected pull request before it uses its labels.
+
+The action calculates a stable version only on a push to the target repository's default branch.
+It uses the labels of a pull request with that base repository, base branch, and merge commit.
+If there is no such pull request, the push needs a configured `DefaultBump` of `patch`, `minor`, or `major`.
+
+The action reads the current labels and latest stable release from the target repository.
+If GitHub reports no latest stable release, the action uses `0.0.0` as the baseline.
+A failed read, a stale pull request, or an invalid decision fails the run without outputs.
+
+Use a separate read-only job for the [required release decision check][release-decision-check].
+Include `labeled` and `unlabeled` to check label changes. Do not use a path filter to skip the check.
+Apply `release:skip` when a change does not need a release.
+If a fork contribution needs publication, follow [Prerelease a fork contribution][fork-prerelease].
 
 ## Inputs
 
@@ -128,6 +157,8 @@ If you omit an input or supply `null` or an empty string, the action keeps the f
 
 | Name | Description | Effective default | Required |
 | --- | --- | --- | --- |
+| `Mode` | Use `calculate` for a read-only version or `publish` for the existing pull request publication workflow. | `publish` | false |
+| `PullRequest` | Select a pull request as `OWNER/REPO#NUMBER` for a branch push in Calculate mode. | `''` | false |
 | `AutoCleanup` | Delete prereleases after the pull request closes. | `true` | false |
 | `SettingsFilePath` | Select the repository settings file before startup. | `.github\auto-release.yml` | false |
 | `DefaultBump` | Select the bump when no bump or skip label exists. Accepts exactly `none`, `patch`, `minor`, or `major` with case-sensitive matching. | `none` | false |
@@ -204,6 +235,18 @@ with:
   SettingsFilePath: .github\repository-release.settings.yml
   WhatIf: true
 ```
+
+## Outputs
+
+These outputs are available only in Calculate mode. For example, read `steps.calculate.outputs.ReleaseVersion` after the step above.
+
+| Name | Description |
+| --- | --- |
+| `Decision` | `release` if the version is valid. `skip` for a valid `release:skip` decision. |
+| `ReleaseVersion` | The calculated SemVer string without `VersionPrefix`. Empty for `skip`. |
+| `CalculatedAt` | The ISO 8601 UTC instant used to calculate a date-dependent prerelease. Empty for other results. |
+
+`Version` remains the GitHub module dependency input. It does not accept the calculated release version.
 
 ## Upgrade the action
 

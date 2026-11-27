@@ -1,11 +1,21 @@
 name: Release GHRepository (by PSModule)
-description: Creates GitHub releases from namespaced pull request labels and release settings.
+description: Calculates versions and creates GitHub releases from pull request labels and release settings.
 author: PSModule
 branding:
   icon: upload-cloud
   color: white
 
 inputs:
+  Mode:
+    description: >-
+      Use calculate to return a version without changing the repository. Use publish for pull-request publication.
+      Effective standard default: publish.
+    required: false
+  PullRequest:
+    description: >-
+      Select a pull request as OWNER/REPO#NUMBER for a Calculate branch push.
+      The action checks that the pull request matches the push.
+    required: false
   AutoCleanup:
     description: >-
       Delete pull-request prereleases and their tags after the pull request closes.
@@ -92,6 +102,17 @@ inputs:
       Effective standard default: github.workspace. A file-defined directory does not select another settings file.
     required: false
 
+outputs:
+  Decision:
+    description: The Calculate decision, release or skip.
+    value: ${{ fromJSON(steps.release.outputs.result || '{}').Decision }}
+  ReleaseVersion:
+    description: The unprefixed semantic version. Empty for skip.
+    value: ${{ fromJSON(steps.release.outputs.result || '{}').ReleaseVersion }}
+  CalculatedAt:
+    description: The ISO 8601 UTC instant used for a date-dependent prerelease, if applicable.
+    value: ${{ fromJSON(steps.release.outputs.result || '{}').CalculatedAt }}
+
 runs:
   using: composite
   steps:
@@ -102,6 +123,8 @@ runs:
       env:
         PSMODULE_AUTO_RELEASE_ACTION_PATH: ${{ github.action_path }}
         PSMODULE_AUTO_RELEASE_SETTING_METADATA: |
+          Mode: { Type: ReleaseMode, Default: publish, Phase: Release }
+          PullRequest: { Type: PullRequestSelector, Default: '', Phase: Release }
           AutoCleanup: { Type: Boolean, Default: true, Phase: Release }
           DefaultBump: { Type: Bump, Default: none, Phase: Release }
           CreateMajorTag: { Type: Boolean, Default: true, Phase: Release }
@@ -118,6 +141,8 @@ runs:
           WorkingDirectory: { Type: DirectoryPath, Default: '.', Phase: Startup }
           Version: { Type: VersionConstraint, Default: '', Phase: Startup }
           Prerelease: { Type: Boolean, Default: false, Phase: Startup }
+        PSMODULE_AUTO_RELEASE_INPUT_Mode: ${{ inputs.Mode }}
+        PSMODULE_AUTO_RELEASE_INPUT_PullRequest: ${{ inputs.PullRequest }}
         PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup: ${{ inputs.AutoCleanup }}
         PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath: ${{ inputs.SettingsFilePath }}
         PSMODULE_AUTO_RELEASE_INPUT_DefaultBump: ${{ inputs.DefaultBump }}
@@ -139,6 +164,7 @@ runs:
         $null = & (Join-Path -Path $env:PSMODULE_AUTO_RELEASE_ACTION_PATH -ChildPath 'src\Initialize-ReleaseConfiguration.ps1')
 
     - name: Release-GHRepository
+      id: release
       uses: PSModule/GitHub-Script@8083ec1f733f00357ee4d0db0c6056686e483bc0 # v1.9.0
       env:
         PSMODULE_AUTO_RELEASE_ACTION_PATH: ${{ github.action_path }}
