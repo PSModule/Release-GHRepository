@@ -1,0 +1,75 @@
+name: Release decision
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
+      - edited
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  ReleaseDecision:
+    name: Release decision
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the candidate merge
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify the pull request snapshot
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: $null = & '.\src\Test-ReleaseDecisionContext.ps1'
+
+      - name: Calculate the release decision
+        id: calculate
+        uses: ./
+        env:
+          PSMODULE_AUTO_RELEASE_CHECK_PUBLISHER: 'true'
+        with:
+          Mode: calculate
+
+      - name: Recheck and report the decision
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_DECISION: ${{ steps.calculate.outputs.Decision }}
+          RELEASE_VERSION: ${{ steps.calculate.outputs.ReleaseVersion }}
+          RELEASE_BUMP_SOURCE: ${{ steps.calculate.outputs.BumpSource }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $checked = & '.\src\Test-ReleaseDecisionContext.ps1'
+          $decision = $env:RELEASE_DECISION
+          $version = $env:RELEASE_VERSION
+          $source = $env:RELEASE_BUMP_SOURCE
+          $hasVersion = -not [string]::IsNullOrWhiteSpace($version)
+          if ($decision -cnotin @('release', 'skip') -or -not $source -or
+              ($decision -ceq 'release') -ne $hasVersion) {
+              throw 'Calculate did not return a complete release decision.'
+          }
+          [ordered]@{
+              PullRequest = $checked.Number
+              BaseBranch  = $checked.BaseRef
+              BaseSha     = $checked.BaseSha
+              HeadSha     = $checked.HeadSha
+              MergeSha    = $checked.MergeSha
+              Decision    = $decision
+              BumpSource  = $source
+              Candidate   = $version
+          } | ConvertTo-Json
