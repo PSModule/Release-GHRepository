@@ -20,8 +20,8 @@ inputs:
   DefaultBump:
     description: >-
       The bump when the pull request has neither a supported bump label nor release:skip.
-      Accepts exactly patch, minor, or major.
-      Effective standard default: patch. Omit or leave empty to follow repository policy.
+      Accepts exactly none, patch, minor, or major. Effective standard default: none.
+      Omit or leave empty to follow repository policy. Use none to clear a configured bump.
     required: false
   CreateMajorTag:
     description: >-
@@ -103,7 +103,7 @@ runs:
         PSMODULE_AUTO_RELEASE_ACTION_PATH: ${{ github.action_path }}
         PSMODULE_AUTO_RELEASE_SETTING_METADATA: |
           AutoCleanup: { Type: Boolean, Default: true, Phase: Release }
-          DefaultBump: { Type: Bump, Default: patch, Phase: Release }
+          DefaultBump: { Type: Bump, Default: none, Phase: Release }
           CreateMajorTag: { Type: Boolean, Default: true, Phase: Release }
           CreateMinorTag: { Type: Boolean, Default: true, Phase: Release }
           DatePrereleaseFormat: { Type: DateTimeFormat, Default: '', Phase: Release }

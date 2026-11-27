@@ -470,7 +470,7 @@ function ConvertTo-ReleaseBump {
 
         .DESCRIPTION
         Validate DefaultBump with case-sensitive matching and return the
-        corresponding internal Patch, Minor, or Major value. Require the
+        corresponding internal None, Patch, Minor, or Major value. Require the
         configured value rather than choosing a policy default.
 
         .EXAMPLE
@@ -498,12 +498,13 @@ function ConvertTo-ReleaseBump {
         [string] $DefaultBump
     )
 
-    $validDefaultBumps = @('patch', 'minor', 'major')
+    $validDefaultBumps = @('none', 'patch', 'minor', 'major')
     if ($validDefaultBumps -cnotcontains $DefaultBump) {
-        throw "Invalid DefaultBump [$DefaultBump]. Use exactly one of: patch, minor, major."
+        throw "Invalid DefaultBump [$DefaultBump]. Use exactly one of: none, patch, minor, major."
     }
 
     switch -CaseSensitive ($DefaultBump) {
+        'none' { 'None' }
         'patch' { 'Patch' }
         'minor' { 'Minor' }
         'major' { 'Major' }
@@ -519,8 +520,8 @@ function Resolve-ReleaseDecision {
         Evaluate only the five namespaced release labels that the action defines.
         An explicit bump label overrides DefaultBump. The release:prerelease label
         selects prerelease mode. The release:skip label prevents publication.
-        Reject conflicting release labels. Require the validated effective
-        DefaultBump instead of loading standards or choosing a policy.
+        Reject conflicting release labels. If DefaultBump is none, require
+        a bump label or release:skip.
 
         .EXAMPLE
         Resolve-ReleaseDecision -Labels @('release:minor') -DefaultBump 'major'
@@ -609,6 +610,10 @@ function Resolve-ReleaseDecision {
     }
 
     $defaultBumpApplied = $bumpLabels.Count -eq 0
+    if ($defaultBumpApplied -and $resolvedDefaultBump -eq 'None') {
+        throw 'No release bump. Apply one of release:patch, release:minor, or release:major, set DefaultBump, or use release:skip.'
+    }
+
     $bump = if ($defaultBumpApplied) {
         $resolvedDefaultBump
     } else {

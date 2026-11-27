@@ -15,17 +15,19 @@ The namespace is `release`. The qualifier selects the release instruction.
 | `release:patch` | Increment the patch version. | Exactly one bump label. |
 | `release:minor` | Increment the minor version. | Exactly one bump label. |
 | `release:major` | Increment the major version. | Exactly one bump label. |
-| `release:prerelease` | Publish from an open pull request as a prerelease. | Alone or with exactly one bump label. |
+| `release:prerelease` | Publish from an open pull request as a prerelease. | With one bump label or a configured default bump. |
 | `release:skip` | Validate without publishing a release. | Without another label from the table. |
 
 If the pull request has no bump or skip label from the table, the action uses `DefaultBump`.
-The default is `patch`. A `release:patch`, `release:minor`, or `release:major` label overrides `DefaultBump`.
+Without a configured bump, the effective value is `none`. Apply one bump label or `release:skip`.
+A `release:patch`, `release:minor`, or `release:major` label overrides `DefaultBump`.
 
 The `release:prerelease` label selects prerelease mode. The `release:skip` label prevents publication.
 
 The action rejects:
 
-- a `DefaultBump` value other than exactly `patch`, `minor`, or `major`;
+- a `DefaultBump` value other than exactly `none`, `patch`, `minor`, or `major`;
+- no bump label or skip decision when `DefaultBump` is `none`;
 - multiple bump labels;
 - `release:skip` with another label from the table.
 
@@ -128,7 +130,7 @@ If you omit an input or supply `null` or an empty string, the action keeps the f
 | --- | --- | --- | --- |
 | `AutoCleanup` | Delete prereleases after the pull request closes. | `true` | false |
 | `SettingsFilePath` | Select the repository settings file before startup. | `.github\auto-release.yml` | false |
-| `DefaultBump` | Select the bump when no explicit bump or skip label exists. Accepts exactly `patch`, `minor`, or `major` with case-sensitive matching. | `patch` | false |
+| `DefaultBump` | Select the bump when no bump or skip label exists. Accepts exactly `none`, `patch`, `minor`, or `major` with case-sensitive matching. | `none` | false |
 | `CreateMajorTag` | Create or update the floating major tag after a stable release. | `true` | false |
 | `CreateMinorTag` | Create or update the floating minor tag after a stable release. | `true` | false |
 | `DatePrereleaseFormat` | Append a [.NET date and time format](https://learn.microsoft.com/en-us/dotnet/standard/base-types/standard-date-and-time-format-strings) to prerelease versions. | `''` | false |
@@ -168,8 +170,9 @@ Each specified working directory must exist.
 For Boolean settings, use `true` or `false`. You can also use these words as strings in any letter case. Do not add spaces.
 The action accepts text values as written. Use a value from the table for `DefaultBump`.
 
-The action reports the source of the bump: a label, an input, a file value, or the default.
-For example, if the file sets `DefaultBump: major`, omit the input to use `major`. Set the `DefaultBump` input to `patch` to use `patch`.
+The action reports whether a label, a workflow input, or the settings file supplies the bump.
+For example, if the file sets `DefaultBump: major`, omit the input to use `major`. Set the input to `patch` to use `patch`.
+Set the input to `none` to require one bump label or `release:skip` even if the file sets a default bump.
 
 To remove the prefix or date suffix, set `VersionPrefix: ''` or `DatePrereleaseFormat: ''` in the file.
 To use the latest version of the GitHub module, set `Version: ''` in the file.
@@ -207,6 +210,8 @@ with:
 Use the [MSX consumer upgrade procedure][consumer-upgrades] to plan the upgrade.
 Read the [release notes][release-notes] for each applicable release after the one your workflow uses, through the target release.
 Apply only the changes that affect your repository. Update the action pin and make those changes in the same pull request.
+
+If your workflow relies on an automatic patch bump, set `DefaultBump: patch` in the settings file or action inputs.
 
 ## Contributing
 

@@ -56,6 +56,7 @@ jobs:
       - name: Action-Test
         uses: ./
         with:
+          DefaultBump: patch
           WhatIf: true
 
       - name: Prepare caller settings

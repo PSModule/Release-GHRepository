@@ -95,7 +95,7 @@ Describe 'Resolve-ReleaseConfiguration' {
         $result = Resolve-ReleaseConfiguration @resolveConfiguration
         $expected = [ordered]@{
             AutoCleanup              = $true
-            DefaultBump              = 'patch'
+            DefaultBump              = 'none'
             CreateMajorTag           = $true
             CreateMinorTag           = $true
             DatePrereleaseFormat     = ''
@@ -209,12 +209,12 @@ Describe 'Resolve-ReleaseConfiguration' {
             Should -Throw '*WhatIf*true or false*'
     }
 
-    It 'rejects an explicit invalid DefaultBump [<Value>] instead of selecting patch' -ForEach @(
+    It 'rejects an explicit invalid DefaultBump [<Value>]' -ForEach @(
         @{ Value = '' }
         @{ Value = $null }
         @{ Value = 'Patch' }
         @{ Value = 'date' }
-        @{ Value = 'none' }
+        @{ Value = 'NONE' }
         @{ Value = 1 }
         @{ Value = @('patch', 'minor') }
     ) {
@@ -276,10 +276,19 @@ Describe 'Resolve-ReleaseConfiguration' {
     }
 
     It 'records the action input as the default source even when it equals the shared default' {
-        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ DefaultBump = 'patch' }
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Inputs @{ DefaultBump = 'none' }
 
-        $result.DefaultBump | Should -BeExactly 'patch'
+        $result.DefaultBump | Should -BeExactly 'none'
         $result.DefaultBumpSource | Should -BeExactly 'ActionInput'
+    }
+
+    It 'lets a caller supply a bump when the settings file selects none' {
+        $result = Resolve-ReleaseConfiguration @resolveConfiguration -Configuration @{ DefaultBump = 'none' } -Inputs @{ DefaultBump = 'minor' }
+        $decision = Resolve-ReleaseDecision -Labels @('release:prerelease') -DefaultBump $result.DefaultBump -DefaultBumpSource $result.DefaultBumpSource
+
+        $decision.Bump | Should -BeExactly 'Minor'
+        $decision.BumpSource | Should -BeExactly 'ActionInput'
+        $decision.Prerelease | Should -BeTrue
     }
 
     It 'records a nondefault named input as the decision source' {
@@ -598,6 +607,7 @@ Describe 'Get-PrereleaseCleanupCandidate' {
 
 Describe 'ConvertTo-ReleaseBump' {
     It 'converts <DefaultBump> to <Expected>' -ForEach @(
+        @{ DefaultBump = 'none'; Expected = 'None' }
         @{ DefaultBump = 'patch'; Expected = 'Patch' }
         @{ DefaultBump = 'minor'; Expected = 'Minor' }
         @{ DefaultBump = 'major'; Expected = 'Major' }
@@ -613,7 +623,7 @@ Describe 'ConvertTo-ReleaseBump' {
         @{ DefaultBump = '' }
         @{ DefaultBump = 'Patch' }
         @{ DefaultBump = 'prerelease' }
-        @{ DefaultBump = 'none' }
+        @{ DefaultBump = 'None' }
         @{ DefaultBump = $null }
     ) {
         { ConvertTo-ReleaseBump -DefaultBump $DefaultBump } |

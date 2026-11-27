@@ -140,7 +140,7 @@ Describe 'Release-GHRepository configuration bootstrap' {
         $settings.Prerelease | Should -BeFalse
         $settings.Version | Should -BeExactly ''
         $settings.WorkingDirectory | Should -BeExactly $workspace
-        $settings.DefaultBump | Should -BeExactly 'patch'
+        $settings.DefaultBump | Should -BeExactly 'none'
         $settings.DefaultBumpSource | Should -BeExactly 'SharedDefault'
         $outputs = & $readBootstrapOutputs -Path $env:GITHUB_OUTPUT
         $outputs.Count | Should -Be 6
@@ -150,7 +150,7 @@ Describe 'Release-GHRepository configuration bootstrap' {
         $outputs.Version | Should -BeExactly ''
         $outputs.WorkingDirectory | Should -BeExactly $workspace
         $releaseSettings = ConvertFrom-Json -InputObject $outputs.ReleaseSettings
-        $releaseSettings.DefaultBump | Should -BeExactly 'patch'
+        $releaseSettings.DefaultBump | Should -BeExactly 'none'
         $releaseSettings.VersionPrefix | Should -BeExactly 'v'
         $releaseSettings.PSObject.Properties.Name | Should -Not -Contain 'Prerelease'
         Should -Invoke Install-PSResource -Times 0 -Exactly
@@ -423,15 +423,31 @@ Describe 'Release-GHRepository caller compatibility' {
         }
     }
 
-    It 'uses action standards without repository settings or injected input defaults' {
+    It 'uses a bump label without repository settings or injected input defaults' {
+        $githubEvent.pull_request.labels = @(@{ name = 'release:patch' })
+        $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+
         $output = (& $runRelease) -join "`n"
 
-        $output | Should -Match 'Default bump:\s+\[patch\]'
+        $output | Should -Match 'Default bump:\s+\[none\]'
+        $output | Should -Match 'Bump source:\s+\[release:patch\]'
         $output | Should -Match 'Auto cleanup enabled:\s+\[True\]'
         $output | Should -Match 'Use PR body as release notes:\s+\[True\]'
         $output | Should -Match 'gh release create v2\.0\.4 '
         $output.Contains($authoredBody) | Should -BeTrue
         Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke git -Times 0 -Exactly
+    }
+
+    It 'rejects a release with <LabelState> and no configured default' -ForEach @(
+        @{ LabelState = 'no labels'; Labels = @() }
+        @{ LabelState = 'only release:prerelease'; Labels = @(@{ name = 'release:prerelease' }) }
+    ) {
+        $githubEvent.pull_request.labels = $Labels
+        $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+
+        { & $runRelease } | Should -Throw '*No release bump*release:skip*'
+        Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[0] -in 'label', 'release' }
         Should -Invoke git -Times 0 -Exactly
     }
 
@@ -528,7 +544,7 @@ Describe 'Release-GHRepository caller compatibility' {
         @{
             FileState       = 'absent'
             FilePresent     = $false
-            ExpectedBump    = 'patch'
+            ExpectedBump    = 'none'
             ExpectedSource  = 'SharedDefault'
             ExpectedVersion = 'v2.0.4'
         }
@@ -538,6 +554,9 @@ Describe 'Release-GHRepository caller compatibility' {
         $null = New-Item -Path (Join-Path -Path $callerDirectory -ChildPath '.github') -ItemType Directory
         if ($FilePresent) {
             'DefaultBump: minor' | Set-Content -LiteralPath (Join-Path -Path $callerDirectory -ChildPath $defaultSettingsPath)
+        } else {
+            $githubEvent.pull_request.labels = @(@{ name = 'release:patch' })
+            $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
         }
         Remove-Item -LiteralPath 'Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath'
         $env:GITHUB_WORKSPACE = $callerDirectory
@@ -615,7 +634,7 @@ VersionPrefix: ''
             ExpectedVersion = 'v3.0.0'
         }
         @{
-            InputState      = 'equal to the standard'
+            InputState      = 'an explicit patch'
             InputValue      = 'patch'
             ExpectedBump    = 'patch'
             ExpectedSource  = 'ActionInput'
@@ -636,18 +655,28 @@ VersionPrefix: ''
         Should -Invoke git -Times 0 -Exactly
     }
 
-    It 'keeps action standards when all release inputs are empty' {
+    It 'does not invent a bump when all release inputs are empty' {
         foreach ($settingName in $releaseSettingNames) {
             [Environment]::SetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$settingName", '')
         }
         $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'true'
 
+        { & $runRelease } | Should -Throw '*No release bump*'
+    }
+
+    It 'lets an explicit none clear a file default without preventing a skip' {
+        'DefaultBump: major' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'none'
+
+        { & $runRelease } | Should -Throw '*No release bump*'
+
+        $githubEvent.pull_request.labels = @(@{ name = 'release:skip' })
+        $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
         $output = (& $runRelease) -join "`n"
 
-        $output | Should -Match 'Default bump:\s+\[patch\]'
-        $output | Should -Match 'Default bump source:\s+\[SharedDefault\]'
-        $output | Should -Match 'gh release create v2\.0\.4 '
-        Should -Invoke gh -Times 2 -Exactly
+        $output | Should -Match 'Default bump source:\s+\[ActionInput\]'
+        $output | Should -Match 'Skip release:\s+\[True\]'
+        $output | Should -Not -Match 'gh release create|git push'
     }
 
     It 'lets release:major override a file minor default and preserves the complete record' {
@@ -722,6 +751,7 @@ VersionPrefix: v
     }
 
     It 'keeps validation read-only when explicit WhatIf overrides a false repository setting' {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
         'WhatIf: false' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
 
         $output = (& $runRelease) -join "`n"
@@ -737,7 +767,7 @@ VersionPrefix: v
 DatePrereleaseFormat: "'fixed'"
 '@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = ''
-        $githubEvent.pull_request.labels = @(@{ name = 'release:prerelease' })
+        $githubEvent.pull_request.labels = @(@{ name = 'release:prerelease' }, @{ name = 'release:patch' })
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 
         $output = (& $runRelease) -join "`n"
@@ -749,6 +779,7 @@ DatePrereleaseFormat: "'fixed'"
     }
 
     It 'keeps a true file WhatIf policy when its named input is empty' {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
         'WhatIf: true' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = ''
 
@@ -876,6 +907,7 @@ WhatIf: true
 
     It 'keeps dependency Prerelease separate from repository prerelease mode' {
         @'
+DefaultBump: patch
 Prerelease: true
 Version: '[0.43.0, 1.0.0)'
 '@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
