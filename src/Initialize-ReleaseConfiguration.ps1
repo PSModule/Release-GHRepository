@@ -33,10 +33,15 @@ param(
 
     # The runner's output file; local callers can omit it to return settings only.
     [Parameter()]
-    [string] $OutputPath = [Environment]::GetEnvironmentVariable('GITHUB_OUTPUT')
+    [string] $OutputPath = [Environment]::GetEnvironmentVariable('GITHUB_OUTPUT'),
+
+    # Evaluate this branch's publisher inputs instead of the check's own inputs.
+    [Parameter()]
+    [string] $PublisherBranch
 )
 
 $ErrorActionPreference = 'Stop'
+$checkPublisher = $PSBoundParameters.ContainsKey('PublisherBranch')
 
 Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath 'Release-GHRepository.Helpers.psm1') -Force
 if ([string]::IsNullOrWhiteSpace($WorkspacePath) -or -not [IO.Path]::IsPathRooted($WorkspacePath) -or
@@ -67,9 +72,25 @@ try {
     $actionDefinitionPath = [IO.Path]::GetFullPath((Join-Path -Path $PSScriptRoot -ChildPath '..\action.yml'))
     $metadata = Get-ReleaseSettingSchema -Path $actionDefinitionPath
     Write-Information "Reading action release standards [$actionDefinitionPath]" -InformationAction Continue
-    $inputs = @{}
-    foreach ($name in $metadata.Keys) {
-        $inputs[$name] = [Environment]::GetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$name")
+    if ($checkPublisher) {
+        $publisherParameters = @{
+            Path         = Join-Path -Path $WorkspacePath -ChildPath '.github\workflows\Release.yml'
+            TargetBranch = $PublisherBranch
+            SettingNames = @($metadata.Keys)
+        }
+        $publisherReader = Join-Path -Path $PSScriptRoot -ChildPath 'Get-ReleaseWorkflowInputs.ps1'
+        $inputs = & $publisherReader @publisherParameters
+        $settingsFilePath = $inputs.SettingsFilePath
+    } else {
+        $inputs = @{}
+        foreach ($name in $metadata.Keys) {
+            $inputs[$name] = [Environment]::GetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$name")
+        }
+        $settingsFilePath = [Environment]::GetEnvironmentVariable('PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath')
+    }
+    $explicitPublisherFile = $checkPublisher -and $inputs.ContainsKey('SettingsFilePath')
+    if ($explicitPublisherFile) {
+        $inputs.Remove('SettingsFilePath')
     }
 
     $initialDirectory = $WorkspacePath
@@ -82,7 +103,6 @@ try {
         }
         $initialDirectory = ConvertTo-ReleaseSettingValue @initialParameters
     }
-    $settingsFilePath = [Environment]::GetEnvironmentVariable('PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath')
     if ($null -eq $settingsFilePath) {
         $actionDefinition = ConvertFrom-Yaml -Yaml ([IO.File]::ReadAllText($actionDefinitionPath))
         $settingsFilePath = $actionDefinition.inputs.SettingsFilePath.default
@@ -93,6 +113,12 @@ try {
         BaseDirectory = $initialDirectory
     }
     $settingsFilePath = Resolve-ReleaseFileSystemPath @pathParameters
+    if ($checkPublisher) {
+        $relativePath = [IO.Path]::GetRelativePath($WorkspacePath, $settingsFilePath)
+        if ([IO.Path]::IsPathRooted($relativePath) -or $relativePath -match '\A\.\.(?:[\\/]|$)') {
+            throw 'The publisher SettingsFilePath must be inside the candidate checkout.'
+        }
+    }
     if (Test-Path -LiteralPath $settingsFilePath -PathType Container) {
         throw 'SettingsFilePath must select a file, not a directory.'
     }
@@ -104,6 +130,8 @@ try {
         if ($null -eq $configuration) {
             throw "Release settings file [$loggedPath] must be a mapping of supported settings."
         }
+    } elseif ($explicitPublisherFile) {
+        throw "The publisher settings file [$loggedPath] was not found in the candidate checkout."
     } else {
         Write-Information "Settings file not found at [$loggedPath]" -InformationAction Continue
     }
@@ -115,6 +143,12 @@ try {
         Configuration = $configuration
     }
     $settings = Resolve-ReleaseConfiguration @configurationParameters
+    if ($checkPublisher) {
+        if ($settings.Mode -cne 'publish') {
+            throw 'The effective publisher Mode must be publish.'
+        }
+        $settings.Mode = 'calculate'
+    }
     $outputs = [ordered]@{}
     $releaseSettings = [ordered]@{}
     foreach ($name in $metadata.Keys) {

@@ -46,7 +46,9 @@ function Get-ReleaseSettingSchema {
     if ($metadata -isnot [System.Collections.IDictionary]) {
         throw 'The action release standards must be a mapping of setting definitions.'
     }
-    $settingNames = @($actionDefinition.inputs.Keys | Where-Object { $_ -ne 'SettingsFilePath' })
+    $validTypes = @('Boolean', 'Text', 'Bump', 'DateTimeFormat', 'VersionConstraint', 'DirectoryPath', 'ReleaseMode', 'PullRequestSelector')
+    $runtimeInputs = @('SettingsFilePath', 'ReleaseVersion', 'CalculatedAt')
+    $settingNames = @($actionDefinition.inputs.Keys | Where-Object { $_ -notin $runtimeInputs })
     foreach ($name in $settingNames) {
         if ($metadata.Keys -notcontains $name) {
             throw "Release standard defaults are missing required setting [$name]."
@@ -62,7 +64,7 @@ function Get-ReleaseSettingSchema {
             $definition.Keys -notcontains 'Phase' -or $definition.Count -ne 3) {
             throw "Invalid metadata for release setting [$name]. Supply Type, Default, and Phase."
         }
-        if (@('Boolean', 'Text', 'Bump', 'DateTimeFormat', 'VersionConstraint', 'DirectoryPath') -cnotcontains $definition.Type) {
+        if ($validTypes -cnotcontains $definition.Type) {
             throw "Invalid metadata type for release setting [$name]."
         }
         if (@('Startup', 'Release') -cnotcontains $definition.Phase) {
@@ -179,7 +181,7 @@ function ConvertTo-ReleaseSettingValue {
 
         # The type supplied by the action's private schema.
         [Parameter(Mandatory)]
-        [ValidateSet('Boolean', 'Text', 'Bump', 'DateTimeFormat', 'VersionConstraint', 'DirectoryPath')]
+        [ValidateSet('Boolean', 'Text', 'Bump', 'DateTimeFormat', 'VersionConstraint', 'DirectoryPath', 'ReleaseMode', 'PullRequestSelector')]
         [string] $Type,
 
         # The supplied value, including null so invalid values can be diagnosed.
@@ -209,6 +211,16 @@ function ConvertTo-ReleaseSettingValue {
     }
     if ($Type -eq 'Bump') {
         $null = ConvertTo-ReleaseBump -DefaultBump $Value
+    }
+    if ($Type -eq 'ReleaseMode' -and $Value -cnotin @('publish', 'calculate')) {
+        throw 'Invalid Mode. Use exactly publish or calculate.'
+    }
+    if ($Type -eq 'PullRequestSelector' -and $Value) {
+        $selectorPattern = '\A[A-Za-z0-9][A-Za-z0-9-]*/(?!\.{1,2}#)[A-Za-z0-9_.-]+#(?<Number>[1-9][0-9]*)\z'
+        $number = 0
+        if ($Value -cnotmatch $selectorPattern -or -not [int]::TryParse($Matches.Number, [ref] $number)) {
+            throw 'Invalid PullRequest. Use OWNER/REPO#NUMBER with a positive pull request number.'
+        }
     }
     if ($Type -eq 'DateTimeFormat' -and -not [string]::IsNullOrEmpty($Value)) {
         try {
@@ -470,7 +482,7 @@ function ConvertTo-ReleaseBump {
 
         .DESCRIPTION
         Validate DefaultBump with case-sensitive matching and return the
-        corresponding internal Patch, Minor, or Major value. Require the
+        corresponding internal None, Patch, Minor, or Major value. Require the
         configured value rather than choosing a policy default.
 
         .EXAMPLE
@@ -498,12 +510,13 @@ function ConvertTo-ReleaseBump {
         [string] $DefaultBump
     )
 
-    $validDefaultBumps = @('patch', 'minor', 'major')
+    $validDefaultBumps = @('none', 'patch', 'minor', 'major')
     if ($validDefaultBumps -cnotcontains $DefaultBump) {
-        throw "Invalid DefaultBump [$DefaultBump]. Use exactly one of: patch, minor, major."
+        throw "Invalid DefaultBump [$DefaultBump]. Use exactly one of: none, patch, minor, major."
     }
 
     switch -CaseSensitive ($DefaultBump) {
+        'none' { 'None' }
         'patch' { 'Patch' }
         'minor' { 'Minor' }
         'major' { 'Major' }
@@ -519,8 +532,8 @@ function Resolve-ReleaseDecision {
         Evaluate only the five namespaced release labels that the action defines.
         An explicit bump label overrides DefaultBump. The release:prerelease label
         selects prerelease mode. The release:skip label prevents publication.
-        Reject conflicting release labels. Require the validated effective
-        DefaultBump instead of loading standards or choosing a policy.
+        Reject conflicting release labels. If DefaultBump is none, require
+        a bump label or release:skip.
 
         .EXAMPLE
         Resolve-ReleaseDecision -Labels @('release:minor') -DefaultBump 'major'
@@ -609,6 +622,10 @@ function Resolve-ReleaseDecision {
     }
 
     $defaultBumpApplied = $bumpLabels.Count -eq 0
+    if ($defaultBumpApplied -and $resolvedDefaultBump -eq 'None') {
+        throw 'No release bump. Apply one of release:patch, release:minor, or release:major, set DefaultBump, or use release:skip.'
+    }
+
     $bump = if ($defaultBumpApplied) {
         $resolvedDefaultBump
     } else {
@@ -738,12 +755,127 @@ function Test-PrereleaseCreation {
     $ReleaseDecision.Prerelease -and -not $ReleaseDecision.Skip -and -not $PullRequestClosed
 }
 
+function Get-ReleaseVersionPlan {
+    <#
+        .SYNOPSIS
+        Calculate a release version without changing repository state.
+
+        .DESCRIPTION
+        Apply the resolved bump to the stable baseline, or to 0.0.0 when
+        there is no baseline. Use the same version rules for publication and
+        calculation. Return a skip decision without a version.
+
+        .EXAMPLE
+        Get-ReleaseVersionPlan -ReleaseDecision $decision -Settings $settings -BaselineTag 'v2.0.3'
+
+        Return the unprefixed version and the version object for its tag.
+
+        .INPUTS
+        None
+
+        You can't pipe objects to Get-ReleaseVersionPlan.
+
+        .OUTPUTS
+        System.Management.Automation.PSCustomObject
+
+        The decision, unprefixed version, tag version, and applicable UTC instant.
+    #>
+    [OutputType([PSCustomObject])]
+    [CmdletBinding()]
+    param(
+        # The validated release decision, including the bump or skip.
+        [Parameter(Mandatory)]
+        [PSCustomObject] $ReleaseDecision,
+
+        # The resolved settings for version prefixes and prerelease suffixes.
+        [Parameter(Mandatory)]
+        [PSCustomObject] $Settings,
+
+        # The latest stable release tag. Omit it only when no stable release exists.
+        [Parameter()]
+        [AllowEmptyString()]
+        [string] $BaselineTag = '',
+
+        # The normalized branch identifier. Omit it to calculate a stable version.
+        [Parameter()]
+        [AllowEmptyString()]
+        [string] $PrereleaseName = '',
+
+        # The instant to use for date-dependent prereleases.
+        [Parameter()]
+        [datetime] $CalculationTime = [datetime]::UtcNow
+    )
+
+    if ($ReleaseDecision.Skip) {
+        [PSCustomObject]@{ Decision = 'skip'; ReleaseVersion = $null; TagVersion = $null; CalculatedAt = $null }
+        return
+    }
+
+    $baseline = $BaselineTag
+    $versionPrefix = [string] $Settings.VersionPrefix
+    if ($baseline) {
+        $baselineCandidates = @(
+            if ($versionPrefix -and $BaselineTag.StartsWith($versionPrefix, [StringComparison]::Ordinal)) {
+                $BaselineTag.Substring($versionPrefix.Length)
+            }
+            $BaselineTag -creplace '\A[A-Za-z]+'
+        )
+        $baseline = $null
+        foreach ($candidate in $baselineCandidates) {
+            $parsed = $null
+            if ([semver]::TryParse($candidate, [ref] $parsed) -and -not $parsed.PrereleaseLabel -and
+                $parsed.ToString() -ceq $candidate) {
+                $baseline = $candidate
+                break
+            }
+        }
+        if ($null -eq $baseline) {
+            throw "Invalid release baseline [$BaselineTag]. Use a stable SemVer release tag."
+        }
+    }
+    $version = New-PSSemVer -Version $baseline
+    $version.Prefix = $versionPrefix
+    switch ($ReleaseDecision.Bump) {
+        'Major' { $version.BumpMajor() }
+        'Minor' { $version.BumpMinor() }
+        'Patch' { $version.BumpPatch() }
+        default { throw "Cannot calculate a version for release bump [$($ReleaseDecision.Bump)]." }
+    }
+
+    $calculatedAt = $null
+    if ($PrereleaseName) {
+        $version.Prerelease = $PrereleaseName
+        if ($Settings.DatePrereleaseFormat) {
+            $CalculationTime = $CalculationTime.ToUniversalTime()
+            $date = $CalculationTime.ToString($Settings.DatePrereleaseFormat, [cultureinfo]::InvariantCulture)
+            $version.Prerelease += ".$date"
+            $calculatedAt = $CalculationTime.ToString('o', [cultureinfo]::InvariantCulture)
+        }
+        if ($Settings.IncrementalPrerelease) {
+            $version.BumpPrereleaseNumber()
+        }
+    }
+
+    $releaseVersion = $version.ToString().Substring($versionPrefix.Length)
+    $parsed = $null
+    if (-not [semver]::TryParse($releaseVersion, [ref] $parsed) -or $parsed.ToString() -cne $releaseVersion) {
+        throw "The calculated version [$releaseVersion] is not valid SemVer."
+    }
+    [PSCustomObject]@{
+        Decision       = 'release'
+        ReleaseVersion = $releaseVersion
+        TagVersion     = $version
+        CalculatedAt   = $calculatedAt
+    }
+}
+
 Export-ModuleMember -Function @(
     'ConvertTo-ReleaseBump'
     'ConvertTo-ReleaseSettingValue'
     'Get-PrereleaseCleanupCandidate'
     'Get-ReleaseLabelDefinition'
     'Get-ReleaseSettingSchema'
+    'Get-ReleaseVersionPlan'
     'Resolve-ReleaseDecision'
     'Resolve-ReleaseConfiguration'
     'Resolve-ReleaseFileSystemPath'

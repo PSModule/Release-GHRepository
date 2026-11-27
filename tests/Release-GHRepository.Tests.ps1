@@ -10,6 +10,7 @@ $ErrorActionPreference = 'Stop'
 BeforeAll {
     Import-Module -Name GitHub, powershell-yaml, PSSemVer
     $mainPath = Join-Path -Path $PSScriptRoot -ChildPath '..\src\main.ps1'
+    $planPath = Join-Path -Path $PSScriptRoot -ChildPath '..\src\Get-EventReleasePlan.ps1'
     $bootstrapPath = Join-Path -Path $PSScriptRoot -ChildPath '..\src\Initialize-ReleaseConfiguration.ps1'
     $helperPath = Join-Path -Path $PSScriptRoot -ChildPath '..\src\Release-GHRepository.Helpers.psm1'
     $actionPath = Join-Path -Path $PSScriptRoot -ChildPath '..\action.yml'
@@ -140,7 +141,7 @@ Describe 'Release-GHRepository configuration bootstrap' {
         $settings.Prerelease | Should -BeFalse
         $settings.Version | Should -BeExactly ''
         $settings.WorkingDirectory | Should -BeExactly $workspace
-        $settings.DefaultBump | Should -BeExactly 'patch'
+        $settings.DefaultBump | Should -BeExactly 'none'
         $settings.DefaultBumpSource | Should -BeExactly 'SharedDefault'
         $outputs = & $readBootstrapOutputs -Path $env:GITHUB_OUTPUT
         $outputs.Count | Should -Be 6
@@ -150,7 +151,7 @@ Describe 'Release-GHRepository configuration bootstrap' {
         $outputs.Version | Should -BeExactly ''
         $outputs.WorkingDirectory | Should -BeExactly $workspace
         $releaseSettings = ConvertFrom-Json -InputObject $outputs.ReleaseSettings
-        $releaseSettings.DefaultBump | Should -BeExactly 'patch'
+        $releaseSettings.DefaultBump | Should -BeExactly 'none'
         $releaseSettings.VersionPrefix | Should -BeExactly 'v'
         $releaseSettings.PSObject.Properties.Name | Should -Not -Contain 'Prerelease'
         Should -Invoke Install-PSResource -Times 0 -Exactly
@@ -340,28 +341,13 @@ Describe 'Release-GHRepository caller compatibility' {
     BeforeEach {
         $environmentNames = @(
             'GITHUB_REPOSITORY'
+            'GITHUB_SERVER_URL'
+            'GITHUB_EVENT_NAME'
             'GITHUB_EVENT_PATH'
             'GITHUB_WORKSPACE'
             'GITHUB_OUTPUT'
             'PSMODULE_AUTO_RELEASE_INPUT_ConfigurationFile'
-            'PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath'
-            'PSMODULE_AUTO_RELEASE_INPUT_AutoCleanup'
-            'PSMODULE_AUTO_RELEASE_INPUT_DefaultBump'
-            'PSMODULE_AUTO_RELEASE_INPUT_CreateMajorTag'
-            'PSMODULE_AUTO_RELEASE_INPUT_CreateMinorTag'
-            'PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat'
-            'PSMODULE_AUTO_RELEASE_INPUT_IncrementalPrerelease'
-            'PSMODULE_AUTO_RELEASE_INPUT_UsePRTitleAsReleaseName'
-            'PSMODULE_AUTO_RELEASE_INPUT_UsePRBodyAsReleaseNotes'
-            'PSMODULE_AUTO_RELEASE_INPUT_UsePRTitleAsNotesHeading'
-            'PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix'
-            'PSMODULE_AUTO_RELEASE_INPUT_WhatIf'
-            'PSMODULE_AUTO_RELEASE_INPUT_Debug'
-            'PSMODULE_AUTO_RELEASE_INPUT_Verbose'
-            'PSMODULE_AUTO_RELEASE_INPUT_WorkingDirectory'
-            'PSMODULE_AUTO_RELEASE_INPUT_Version'
-            'PSMODULE_AUTO_RELEASE_INPUT_Prerelease'
-        )
+        ) + @($actionDefinition.inputs.Keys | ForEach-Object { "PSMODULE_AUTO_RELEASE_INPUT_$_" })
         $savedEnvironment = @{}
         foreach ($name in $environmentNames) {
             $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
@@ -371,6 +357,8 @@ Describe 'Release-GHRepository caller compatibility' {
         }
 
         $env:GITHUB_REPOSITORY = 'example/repository'
+        $env:GITHUB_SERVER_URL = 'https://github.com'
+        $env:GITHUB_EVENT_NAME = 'pull_request'
         $env:GITHUB_EVENT_PATH = Join-Path -Path $TestDrive -ChildPath 'event.json'
         $env:GITHUB_WORKSPACE = $TestDrive
         $env:GITHUB_OUTPUT = Join-Path -Path $TestDrive -ChildPath ('outputs-{0}.txt' -f [guid]::NewGuid().ToString('N'))
@@ -379,14 +367,15 @@ Describe 'Release-GHRepository caller compatibility' {
         $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'true'
         $githubEvent = @{
             action       = 'opened'
+            repository   = @{ full_name = $env:GITHUB_REPOSITORY; default_branch = 'main'; fork = $false }
             pull_request = @{
                 number = 42
                 title  = 'The complete authored record is preserved'
                 body   = $authoredBody
                 merged = $false
                 state  = 'open'
-                base   = @{ ref = 'main' }
-                head   = @{ ref = 'feature/caller'; sha = $headSha }
+                base   = @{ ref = 'main'; repo = @{ full_name = $env:GITHUB_REPOSITORY } }
+                head   = @{ ref = 'feature/caller'; sha = $headSha; repo = @{ full_name = $env:GITHUB_REPOSITORY } }
                 labels = @()
             }
         }
@@ -396,11 +385,23 @@ Describe 'Release-GHRepository caller compatibility' {
         $simulateLabelWrites = $false
         Mock Install-PSResource {}
         Mock Write-GitHubNotice {}
-        Mock git { throw 'A caller compatibility test must never invoke git.' }
+        Mock git {
+            if ($args[0] -cne 'check-ref-format') {
+                throw 'A caller compatibility test must never mutate Git refs.'
+            }
+            $global:LASTEXITCODE = 0
+        }
         Mock gh {
             $global:LASTEXITCODE = 0
-            if ($args[0] -eq 'repo' -and $args[1] -eq 'view') {
-                '{"defaultBranchRef":{"name":"main"}}'
+            if ($args[0] -ceq 'api' -and $args[1] -ceq 'repos/example/repository/pulls/42') {
+                $eventRecord = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($env:GITHUB_EVENT_PATH))
+                ConvertTo-Json -InputObject $eventRecord.pull_request -Depth 20 -Compress
+            } elseif ($args[0] -ceq 'api' -and $args[1] -ceq 'graphql') {
+                $stable = @{ tagName = 'v2.0.3'; isDraft = $false; isPrerelease = $false }
+                $history = @{ data = @{ repository = @{ nameWithOwner = 'example/repository'; latestRelease = $stable } } }
+                ConvertTo-Json -InputObject $history -Depth 5 -Compress
+            } elseif ($args[0] -ceq 'api' -and $args[1] -clike 'repos/example/repository/git/matching-refs/tags/*') {
+                '[]'
             } elseif ($args[0] -eq 'release' -and $args[1] -eq 'list') {
                 $releaseRecordsJson
             } elseif ($simulateLabelWrites -and $args[0] -eq 'label' -and $args[1] -eq 'create') {
@@ -423,15 +424,29 @@ Describe 'Release-GHRepository caller compatibility' {
         }
     }
 
-    It 'uses action standards without repository settings or injected input defaults' {
+    It 'uses a bump label without repository settings or injected input defaults' {
+        $githubEvent.pull_request.labels = @(@{ name = 'release:patch' }, @{ name = 'release:prerelease' })
+        $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+
         $output = (& $runRelease) -join "`n"
 
-        $output | Should -Match 'Default bump:\s+\[patch\]'
+        $output | Should -Match 'Default bump:\s+\[none\]'
+        $output | Should -Match 'Bump source:\s+\[release:patch\]'
         $output | Should -Match 'Auto cleanup enabled:\s+\[True\]'
         $output | Should -Match 'Use PR body as release notes:\s+\[True\]'
-        $output | Should -Match 'gh release create v2\.0\.4 '
+        $output | Should -Match 'gh release create v2\.0\.4-featurecaller\.1 '
         $output.Contains($authoredBody) | Should -BeTrue
-        Should -Invoke gh -Times 2 -Exactly
+    }
+
+    It 'rejects a release with <LabelState> and no configured default' -ForEach @(
+        @{ LabelState = 'no labels'; Labels = @() }
+        @{ LabelState = 'only release:prerelease'; Labels = @(@{ name = 'release:prerelease' }) }
+    ) {
+        $githubEvent.pull_request.labels = $Labels
+        $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+
+        { & $runRelease } | Should -Throw '*No release bump*release:skip*'
+        Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[0] -in 'label', 'release' }
         Should -Invoke git -Times 0 -Exactly
     }
 
@@ -456,7 +471,7 @@ Describe 'Release-GHRepository caller compatibility' {
         $fixtureDirectory = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N'))
         $fixtureSource = Join-Path -Path $fixtureDirectory -ChildPath 'src'
         $null = New-Item -Path $fixtureSource -ItemType Directory -Force
-        Copy-Item -LiteralPath $mainPath, $helperPath, $bootstrapPath -Destination $fixtureSource
+        Copy-Item -LiteralPath $mainPath, $helperPath, $bootstrapPath, $planPath -Destination $fixtureSource
         $fixtureMetadata = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $actionPath -Raw)
         $standardData = ConvertFrom-Yaml -Yaml $fixtureMetadata.runs.steps[0].env.PSMODULE_AUTO_RELEASE_SETTING_METADATA
         $fixtureStandards = ConvertFrom-Yaml -Yaml $fixtureStandardsYaml
@@ -508,8 +523,7 @@ Describe 'Release-GHRepository caller compatibility' {
                 $output | Should -Match 'Default bump:\s+\[minor\]'
                 $output | Should -Match 'Default bump source:\s+\[SharedDefault\]'
                 $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
-                $output | Should -Match 'gh release create v2\.1\.0 '
-                Should -Invoke gh -Times 2 -Exactly
+                $output | Should -Not -Match 'gh release create'
             }
         } finally {
             Pop-Location
@@ -519,18 +533,16 @@ Describe 'Release-GHRepository caller compatibility' {
 
     It 'uses the declared SettingsFilePath default when the file is <FileState>' -ForEach @(
         @{
-            FileState       = 'present'
-            FilePresent     = $true
-            ExpectedBump    = 'minor'
-            ExpectedSource  = 'RepositorySetting'
-            ExpectedVersion = 'v2.1.0'
+            FileState      = 'present'
+            FilePresent    = $true
+            ExpectedBump   = 'minor'
+            ExpectedSource = 'RepositorySetting'
         }
         @{
-            FileState       = 'absent'
-            FilePresent     = $false
-            ExpectedBump    = 'patch'
-            ExpectedSource  = 'SharedDefault'
-            ExpectedVersion = 'v2.0.4'
+            FileState      = 'absent'
+            FilePresent    = $false
+            ExpectedBump   = 'none'
+            ExpectedSource = 'SharedDefault'
         }
     ) {
         $defaultSettingsPath = '.github\auto-release.yml'
@@ -538,6 +550,9 @@ Describe 'Release-GHRepository caller compatibility' {
         $null = New-Item -Path (Join-Path -Path $callerDirectory -ChildPath '.github') -ItemType Directory
         if ($FilePresent) {
             'DefaultBump: minor' | Set-Content -LiteralPath (Join-Path -Path $callerDirectory -ChildPath $defaultSettingsPath)
+        } else {
+            $githubEvent.pull_request.labels = @(@{ name = 'release:patch' })
+            $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
         }
         Remove-Item -LiteralPath 'Env:\PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath'
         $env:GITHUB_WORKSPACE = $callerDirectory
@@ -551,8 +566,7 @@ Describe 'Release-GHRepository caller compatibility' {
 
         $output | Should -Match "Default bump:\s+\[$ExpectedBump\]"
         $output | Should -Match "Default bump source:\s+\[$ExpectedSource\]"
-        $output | Should -Match "gh release create $([regex]::Escape($ExpectedVersion)) "
-        Should -Invoke gh -Times 2 -Exactly
+        $output | Should -Not -Match 'gh release create'
         Should -Invoke git -Times 0 -Exactly
     }
 
@@ -573,8 +587,7 @@ Describe 'Release-GHRepository caller compatibility' {
         $output = (& $runRelease) -join "`n"
 
         $output | Should -Match 'Default bump:\s+\[minor\]'
-        $output | Should -Match 'gh release create v2\.1\.0 '
-        Should -Invoke gh -Times 2 -Exactly
+        $output | Should -Not -Match 'gh release create'
     }
 
     It 'keeps repository policy when the runner supplies empty release inputs' {
@@ -594,32 +607,28 @@ VersionPrefix: ''
         $output | Should -Match 'Default bump:\s+\[minor\]'
         $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
         $output | Should -Match 'Date-based prerelease format:\s+\[\]'
-        $output | Should -Match 'gh release create 2\.1\.0 '
-        Should -Invoke gh -Times 2 -Exactly
+        $output | Should -Not -Match 'gh release create'
         Should -Invoke git -Times 0 -Exactly
     }
 
     It 'distinguishes existing file policy from a named bump that is <InputState>' -ForEach @(
         @{
-            InputState      = 'omitted'
-            InputValue      = $null
-            ExpectedBump    = 'major'
-            ExpectedSource  = 'RepositorySetting'
-            ExpectedVersion = 'v3.0.0'
+            InputState     = 'omitted'
+            InputValue     = $null
+            ExpectedBump   = 'major'
+            ExpectedSource = 'RepositorySetting'
         }
         @{
-            InputState      = 'empty'
-            InputValue      = ''
-            ExpectedBump    = 'major'
-            ExpectedSource  = 'RepositorySetting'
-            ExpectedVersion = 'v3.0.0'
+            InputState     = 'empty'
+            InputValue     = ''
+            ExpectedBump   = 'major'
+            ExpectedSource = 'RepositorySetting'
         }
         @{
-            InputState      = 'equal to the standard'
-            InputValue      = 'patch'
-            ExpectedBump    = 'patch'
-            ExpectedSource  = 'ActionInput'
-            ExpectedVersion = 'v2.0.4'
+            InputState     = 'an explicit patch'
+            InputValue     = 'patch'
+            ExpectedBump   = 'patch'
+            ExpectedSource = 'ActionInput'
         }
     ) {
         if ($null -ne $InputValue) {
@@ -631,37 +640,47 @@ VersionPrefix: ''
 
         $output | Should -Match "Default bump:\s+\[$ExpectedBump\]"
         $output | Should -Match "Default bump source:\s+\[$ExpectedSource\]"
-        $output | Should -Match "gh release create $([regex]::Escape($ExpectedVersion)) "
-        Should -Invoke gh -Times 2 -Exactly
+        $output | Should -Not -Match 'gh release create'
         Should -Invoke git -Times 0 -Exactly
     }
 
-    It 'keeps action standards when all release inputs are empty' {
+    It 'does not invent a bump when all release inputs are empty' {
         foreach ($settingName in $releaseSettingNames) {
             [Environment]::SetEnvironmentVariable("PSMODULE_AUTO_RELEASE_INPUT_$settingName", '')
         }
         $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'true'
 
+        { & $runRelease } | Should -Throw '*No release bump*'
+    }
+
+    It 'lets an explicit none clear a file default without preventing a skip' {
+        'DefaultBump: major' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'none'
+
+        { & $runRelease } | Should -Throw '*No release bump*'
+
+        $githubEvent.pull_request.labels = @(@{ name = 'release:skip' })
+        $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
         $output = (& $runRelease) -join "`n"
 
-        $output | Should -Match 'Default bump:\s+\[patch\]'
-        $output | Should -Match 'Default bump source:\s+\[SharedDefault\]'
-        $output | Should -Match 'gh release create v2\.0\.4 '
-        Should -Invoke gh -Times 2 -Exactly
+        $output | Should -Match 'Default bump source:\s+\[ActionInput\]'
+        $output | Should -Match 'Skip release:\s+\[True\]'
+        $output | Should -Not -Match 'gh release create|git push'
     }
 
     It 'lets release:major override a file minor default and preserves the complete record' {
         'DefaultBump: minor' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
-        $githubEvent.pull_request.labels = @(@{ name = 'release:major' }, @{ name = 'dependencies' })
+        $githubEvent.pull_request.labels = @(
+            @{ name = 'release:major' }, @{ name = 'release:prerelease' }, @{ name = 'dependencies' }
+        )
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 
         $output = (& $runRelease) -join "`n"
 
         $output | Should -Match 'Default bump applied:\s+\[False\]'
-        $output | Should -Match 'gh release create v3\.0\.0 '
+        $output | Should -Match 'gh release create v3\.0\.0-featurecaller\.1 '
         $output.Contains($authoredBody) | Should -BeTrue
         $output | Should -Match '# The complete authored record is preserved \(#42\)'
-        Should -Invoke gh -Times 2 -Exactly
     }
 
     It 'ignores dependency, retired, and bare labels when using the caller default' {
@@ -677,7 +696,7 @@ VersionPrefix: ''
 
         $output | Should -Match 'Default bump applied:\s+\[True\]'
         $output | Should -Match 'Create a prerelease:\s+\[False\]'
-        $output | Should -Match 'gh release create v2\.1\.0 '
+        $output | Should -Not -Match 'gh release create'
     }
 
     It 'lets a named DefaultBump override repository policy' {
@@ -689,8 +708,7 @@ VersionPrefix: ''
         $output | Should -Match 'Default bump:\s+\[minor\]'
         $output | Should -Match 'Default bump source:\s+\[ActionInput\]'
         $output | Should -Match 'Bump source:\s+\[ActionInput\]'
-        $output | Should -Match 'gh release create v2\.1\.0 '
-        Should -Invoke gh -Times 2 -Exactly
+        $output | Should -Not -Match 'gh release create'
     }
 
     It 'applies named patch and false while an empty text input keeps file policy' {
@@ -709,8 +727,7 @@ VersionPrefix: v
         $output | Should -Match 'Default bump source:\s+\[ActionInput\]'
         $output | Should -Match 'Auto cleanup enabled:\s+\[False\]'
         $output | Should -Match 'Version prefix:\s+\[v\]'
-        $output | Should -Match 'gh release create v2\.0\.4 '
-        Should -Invoke gh -Times 2 -Exactly
+        $output | Should -Not -Match 'gh release create'
     }
 
     It 'does not mask an invalid file value with a valid explicit caller override' {
@@ -722,13 +739,14 @@ VersionPrefix: v
     }
 
     It 'keeps validation read-only when explicit WhatIf overrides a false repository setting' {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
         'WhatIf: false' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
 
         $output = (& $runRelease) -join "`n"
 
         $output | Should -Match 'What if mode:\s+\[True\]'
         $output | Should -Match 'WhatIf: gh label create '
-        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[0] -ceq 'label' }
         Should -Invoke git -Times 0 -Exactly
     }
 
@@ -737,18 +755,17 @@ VersionPrefix: v
 DatePrereleaseFormat: "'fixed'"
 '@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = ''
-        $githubEvent.pull_request.labels = @(@{ name = 'release:prerelease' })
+        $githubEvent.pull_request.labels = @(@{ name = 'release:prerelease' }, @{ name = 'release:patch' })
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 
         $output = (& $runRelease) -join "`n"
 
         $output | Should -Match "Date-based prerelease format:\s+\['fixed'\]"
         $output | Should -Match 'gh release create v2\.0\.4-featurecaller\.fixed\.1 '
-        Should -Invoke gh -Times 2 -Exactly
-        Should -Invoke git -Times 0 -Exactly
     }
 
     It 'keeps a true file WhatIf policy when its named input is empty' {
+        $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
         'WhatIf: true' | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
         $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = ''
 
@@ -756,7 +773,7 @@ DatePrereleaseFormat: "'fixed'"
 
         $output | Should -Match 'What if mode:\s+\[True\]'
         $output | Should -Match 'WhatIf: gh label create '
-        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[0] -ceq 'label' }
         Should -Invoke git -Times 0 -Exactly
     }
 
@@ -770,7 +787,6 @@ DatePrereleaseFormat: "'fixed'"
 
         $output | Should -Match 'Version prefix:\s+\[inherit\]'
         $output | Should -Match 'Skipping release creation\.'
-        Should -Invoke gh -Times 2 -Exactly
         Should -Invoke git -Times 0 -Exactly
     }
 
@@ -816,20 +832,21 @@ DatePrereleaseFormat: "'fixed'"
         $output | Should -Match 'Skip release:\s+\[True\]'
         $output | Should -Match 'Skipping release creation\.'
         $output | Should -Not -Match 'gh release create|git push|git tag'
-        Should -Invoke gh -Times 2 -Exactly
         Should -Invoke Write-GitHubNotice -Times 0 -Exactly
     }
 
-    It 'validates a skipped branch even when it has no ASCII prerelease identifier' {
+    It 'validates cleanup for a skipped branch with no ASCII prerelease identifier' {
         $githubEvent.pull_request.head.ref = ([char] 0x2603).ToString()
         $githubEvent.pull_request.labels = @(@{ name = 'release:skip' })
+        $githubEvent.pull_request.state = 'closed'
+        $githubEvent.action = 'closed'
         $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 
         $output = (& $runRelease) -join "`n"
 
         $output | Should -Match 'Skip release:\s+\[True\]'
         $output | Should -Match 'no prerelease identifier'
-        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke gh -Times 0 -Exactly
         Should -Invoke git -Times 0 -Exactly
     }
 
@@ -848,7 +865,7 @@ DatePrereleaseFormat: "'fixed'"
         $output | Should -Match 'Skipping release creation\.'
         $output | Should -Match 'WhatIf: gh release delete v2\.0\.4-featurecaller\.1'
         $output | Should -Not -Match 'gh release create|git tag|git push'
-        Should -Invoke gh -Times 2 -Exactly
+        Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[1] -ceq 'graphql' }
         Should -Invoke git -Times 0 -Exactly
     }
 
@@ -869,13 +886,13 @@ WhatIf: true
         $output | Should -Match 'Default bump:\s+\[major\]'
         $output | Should -Match 'Default bump source:\s+\[RepositorySetting\]'
         $output | Should -Match 'What if mode:\s+\[True\]'
-        $output | Should -Match 'gh release create v3\.0\.0 '
-        Should -Invoke gh -Times 2 -Exactly
+        $output | Should -Not -Match 'gh release create'
         Should -Invoke git -Times 0 -Exactly
     }
 
     It 'keeps dependency Prerelease separate from repository prerelease mode' {
         @'
+DefaultBump: patch
 Prerelease: true
 Version: '[0.43.0, 1.0.0)'
 '@ | Set-Content -LiteralPath $env:PSMODULE_AUTO_RELEASE_INPUT_SettingsFilePath
@@ -886,9 +903,7 @@ Version: '[0.43.0, 1.0.0)'
         $outputs.Prerelease | Should -BeExactly 'true'
         $outputs.Version | Should -BeExactly '[0.43.0, 1.0.0)'
         $output | Should -Match 'Create a prerelease:\s+\[False\]'
-        $output | Should -Match 'gh release create v2\.0\.4 '
-        $output | Should -Not -Match '--prerelease'
-        Should -Invoke gh -Times 2 -Exactly
+        $output | Should -Not -Match 'gh release create|--prerelease'
         Should -Invoke git -Times 0 -Exactly
     }
 
@@ -922,7 +937,6 @@ Version: '[0.43.0, 1.0.0)'
         $deleteCommand = "WhatIf: gh release delete $TagName --cleanup-tag --yes"
         $output.Contains($deleteCommand) | Should -Be $DeleteExpected
         $output | Should -Not -Match 'gh release create|git tag|git push'
-        Should -Invoke gh -Times 2 -Exactly
         Should -Invoke git -Times 0 -Exactly
     }
 
@@ -936,35 +950,59 @@ Version: '[0.43.0, 1.0.0)'
         $output | Should -Match 'gh release create v2\.1\.0-featurecaller\.1 '
         $output | Should -Match "--target $headSha --prerelease"
         $output | Should -Match 'WhatIf: gh pr comment 42 '
-        Should -Invoke gh -Times 2 -Exactly
-        Should -Invoke git -Times 0 -Exactly
+        Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[0] -cin @('label', 'release', 'pr') -or $args -ccontains 'POST' }
+        Should -Invoke git -Times 0 -Exactly -ParameterFilter { $args[0] -cne 'check-ref-format' }
     }
 
-    Context 'Stable publication from a merged pull request' {
+    Context 'Stable publication from a default-branch push' {
         BeforeEach {
-            $githubEvent.action = 'closed'
-            $githubEvent.pull_request.merged = $true
-            $githubEvent.pull_request.state = 'closed'
-            $githubEvent.pull_request.merge_commit_sha = $squashCommitSha
-            $githubEvent.pull_request.labels = @(@{ name = 'release:major' })
+            $env:GITHUB_EVENT_NAME = 'push'
+            $mergedPullRequest = $githubEvent.pull_request
+            $mergedPullRequest.state = 'closed'
+            $mergedPullRequest.merged_at = '2026-01-03T00:00:00Z'
+            $mergedPullRequest.merge_commit_sha = $squashCommitSha
+            $mergedPullRequest.labels = @(@{ name = 'release:major' })
+            $githubEvent = @{
+                ref        = 'refs/heads/main'
+                after      = $squashCommitSha
+                deleted    = $false
+                repository = $githubEvent.repository
+            }
             $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
             $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'false'
-            $simulateLabelWrites = $true
+            $stableRemote = 'https://github.com/example/repository.git'
             Mock git { $global:LASTEXITCODE = 0 }
+            Mock gh {
+                $global:LASTEXITCODE = 0
+                switch ($args[1]) {
+                    'repos/example/repository' { '{"full_name":"example/repository","default_branch":"main"}' }
+                    'repos/example/repository/pulls/42' {
+                        ConvertTo-Json -InputObject $mergedPullRequest -Depth 10 -Compress
+                    }
+                    "repos/example/repository/commits/$squashCommitSha/pulls" {
+                        ConvertTo-Json -InputObject @(, @($mergedPullRequest)) -Depth 10 -Compress
+                    }
+                }
+            } -ParameterFilter {
+                $args[0] -ceq 'api' -and $args[1] -cin @(
+                    'repos/example/repository', 'repos/example/repository/pulls/42', "repos/example/repository/commits/$squashCommitSha/pulls"
+                )
+            }
             Mock gh { $global:LASTEXITCODE = 0 } -ParameterFilter {
-                $args[0] -eq 'release' -and $args[1] -eq 'create'
+                ($args[0] -ceq 'release' -and $args[1] -ceq 'create') -or
+                ($args[0] -ceq 'api' -and $args[1] -ceq 'repos/example/repository/git/refs' -and $args -ccontains 'POST')
             }
         }
 
         It 'points the version tag and both enabled aliases at the squash commit' {
             $null = & $runRelease
 
-            Should -Invoke git -Times 3 -Exactly
             Should -Invoke git -Times 1 -Exactly -ParameterFilter {
-                ($args -join ' ') -ceq "fetch --no-tags origin $squashCommitSha"
+                ($args -join ' ') -ceq "fetch --no-tags $stableRemote $squashCommitSha"
             }
-            Should -Invoke git -Times 1 -Exactly -ParameterFilter {
-                ($args -join ' ') -ceq "push --no-follow-tags origin ${squashCommitSha}:refs/tags/v3.0.0"
+            Should -Invoke gh -Times 1 -Exactly -ParameterFilter {
+                $args[0] -ceq 'api' -and $args -ccontains 'POST' -and
+                $args -ccontains 'ref=refs/tags/v3.0.0' -and $args -ccontains "sha=$squashCommitSha"
             }
             Should -Invoke gh -Times 1 -Exactly -ParameterFilter {
                 $args[0] -eq 'release' -and $args[1] -eq 'create' -and $args[2] -eq 'v3.0.0' -and
@@ -972,7 +1010,8 @@ Version: '[0.43.0, 1.0.0)'
                 $args -notcontains '--prerelease'
             }
             Should -Invoke git -Times 1 -Exactly -ParameterFilter {
-                ($args -join ' ') -ceq "push --no-follow-tags origin +${squashCommitSha}:refs/tags/v3 +${squashCommitSha}:refs/tags/v3.0"
+                $expected = "push --no-follow-tags $stableRemote +${squashCommitSha}:refs/tags/v3 +${squashCommitSha}:refs/tags/v3.0"
+                ($args -join ' ') -ceq $expected
             }
         }
 
@@ -982,65 +1021,52 @@ Version: '[0.43.0, 1.0.0)'
 
             $null = & $runRelease
 
-            Should -Invoke git -Times 1 -Exactly -ParameterFilter { $args[0] -eq 'push' }
-            Should -Invoke git -Times 1 -Exactly -ParameterFilter {
-                ($args -join ' ') -ceq "push --no-follow-tags origin ${squashCommitSha}:refs/tags/v3.0.0"
+            Should -Invoke git -Times 0 -Exactly -ParameterFilter { $args[0] -cin @('push', 'fetch') }
+            Should -Invoke gh -Times 1 -Exactly -ParameterFilter {
+                $args[0] -ceq 'api' -and $args -ccontains 'POST' -and $args -ccontains 'ref=refs/tags/v3.0.0'
             }
         }
 
-        It 'does not publish or move aliases if Git rejects the version tag' {
-            Mock git { $global:LASTEXITCODE = 1 } -ParameterFilter {
-                $args[0] -eq 'push' -and $args -contains "${squashCommitSha}:refs/tags/v3.0.0"
+        It 'does not publish or move aliases if GitHub rejects the version tag' {
+            Mock gh { $global:LASTEXITCODE = 1 } -ParameterFilter {
+                $args[0] -ceq 'api' -and $args -ccontains 'POST' -and $args -ccontains 'ref=refs/tags/v3.0.0'
             }
 
-            { & $runRelease } | Should -Throw '*version tag*v3.0.0*'
+            { & $runRelease } | Should -Throw '*release tag*v3.0.0*'
 
             Should -Invoke gh -Times 0 -Exactly -ParameterFilter {
                 $args[0] -eq 'release' -and $args[1] -eq 'create'
             }
-            Should -Invoke git -Times 1 -Exactly -ParameterFilter { $args[0] -eq 'push' }
+            Should -Invoke git -Times 0 -Exactly -ParameterFilter { $args[0] -ceq 'push' }
         }
 
-        It 'rejects a <SourceCase> merge SHA before writing labels or tags' -ForEach @(
-            @{ SourceCase = 'missing'; MergeSha = $null }
-            @{ SourceCase = 'branch name instead of a'; MergeSha = 'main' }
+        It 'rejects a <SourceCase> pushed SHA before writing labels or tags' -ForEach @(
+            @{ SourceCase = 'missing'; CommitSha = $null }
+            @{ SourceCase = 'branch name instead of a'; CommitSha = 'main' }
         ) {
-            $githubEvent.pull_request.merge_commit_sha = $MergeSha
+            $githubEvent.after = $CommitSha
             $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
 
-            { & $runRelease } | Should -Throw '*merge commit SHA*'
+            { & $runRelease } | Should -Throw '*branch push*full commit SHA*'
 
-            Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[0] -eq 'label' -or $args[0] -eq 'release' }
+            Should -Invoke gh -Times 0 -Exactly
             Should -Invoke git -Times 0 -Exactly
         }
 
-        It 'does not write labels or tags if it cannot fetch the squash commit' {
+        It 'does not write a tag if it cannot fetch the target for the enabled aliases' {
             Mock git { $global:LASTEXITCODE = 1 } -ParameterFilter { $args[0] -eq 'fetch' }
 
-            { & $runRelease } | Should -Throw '*Failed to fetch the merge commit*'
-
-            Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[0] -eq 'label' -or $args[0] -eq 'release' }
-            Should -Invoke git -Times 0 -Exactly -ParameterFilter { $args[0] -eq 'push' }
-        }
-
-        It 'does not publish a stable release on <Case>' -ForEach @(
-            @{ Case = 'a label change after merge'; Action = 'labeled'; Base = 'main' }
-            @{ Case = 'a merge into a different branch'; Action = 'closed'; Base = 'Main' }
-        ) {
-            $githubEvent.action = $Action
-            $githubEvent.pull_request.base.ref = $Base
-            $githubEvent | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
-
-            $null = & $runRelease
+            { & $runRelease } | Should -Throw '*Failed to fetch release target*'
 
             Should -Invoke gh -Times 0 -Exactly -ParameterFilter {
-                $args[0] -eq 'release' -and $args[1] -eq 'create'
+                $args[0] -cin @('label', 'release', 'pr') -or $args -ccontains 'POST'
             }
-            Should -Invoke git -Times 0 -Exactly
+            Should -Invoke git -Times 0 -Exactly -ParameterFilter { $args[0] -eq 'push' }
         }
     }
 
     It 'does not write labels or tags when the event has no pull request' {
+        $env:GITHUB_EVENT_NAME = 'workflow_dispatch'
         '{}' | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
         $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'false'
         $simulateLabelWrites = $true
