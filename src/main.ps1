@@ -165,6 +165,23 @@ if ($plan.CleanupOnly -and $Settings.AutoCleanup) {
     }
 }
 
+if ($isPullRequest) {
+    foreach ($definition in Get-ReleaseLabelDefinition) {
+        $arguments = @(
+            'label', 'create', $definition.Name, '--repo', $repositoryArgument
+            '--color', $definition.Color, '--description', $definition.Description, '--force'
+        )
+        if ($whatIf) {
+            Write-Output "WhatIf: gh $($arguments -join ' ')"
+        } else {
+            gh @arguments
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to provision canonical label [$($definition.Name)]. gh exited with code [$LASTEXITCODE]."
+            }
+        }
+    }
+}
+
 if ($plan.ReleaseVersion) {
     $tag = $plan.TagVersion.ToString()
     $target = $plan.CommitSha
@@ -273,23 +290,6 @@ if ($plan.ReleaseVersion) {
     }
 } else {
     Write-Output 'Skipping release creation.'
-}
-
-if ($isPullRequest) {
-    foreach ($definition in Get-ReleaseLabelDefinition) {
-        $arguments = @(
-            'label', 'create', $definition.Name, '--repo', $repositoryArgument
-            '--color', $definition.Color, '--description', $definition.Description, '--force'
-        )
-        if ($whatIf) {
-            Write-Output "WhatIf: gh $($arguments -join ' ')"
-        } else {
-            gh @arguments
-            if ($LASTEXITCODE -ne 0) {
-                throw "Failed to provision canonical label [$($definition.Name)]. gh exited with code [$LASTEXITCODE]."
-            }
-        }
-    }
 }
 
 foreach ($release in $prereleasesToCleanup) {

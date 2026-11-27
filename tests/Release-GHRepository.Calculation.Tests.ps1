@@ -508,6 +508,27 @@ Describe 'Release-GHRepository event release plans' {
             }
         }
 
+        It 'does not write tags or releases for <Case> if label provisioning fails' -ForEach @(
+            @{ Case = 'a new prerelease'; Replacing = $false }
+            @{ Case = 'an unnumbered replacement'; Replacing = $true }
+        ) {
+            if ($Replacing) {
+                $env:PSMODULE_AUTO_RELEASE_INPUT_IncrementalPrerelease = 'false'
+                $tag = 'v2.1.0-featurecalc'
+                $tagReferences = @(@{ ref = "refs/tags/$tag"; object = @{ sha = $mergeSha; type = 'commit' } })
+                $releaseRecords += @{ tagName = $tag; isPrerelease = $true; isDraft = $false }
+            }
+            Mock gh { $global:LASTEXITCODE = 1 } -ParameterFilter { $args[0] -ceq 'label' -and $args[1] -ceq 'create' }
+
+            { & $runActionStep } | Should -Throw '*Failed to provision canonical label*'
+
+            Should -Invoke gh -Times 0 -Exactly -ParameterFilter {
+                ($args[0] -ceq 'release' -and $args[1] -cin @('create', 'delete')) -or
+                ($args[0] -ceq 'api' -and $args -ccontains 'POST') -or
+                $args[0] -ceq 'pr'
+            }
+        }
+
         It 'replays the UTC Calculate output after midnight' {
             $clock = [datetime]::new(2026, 1, 3, 23, 59, 0, [DateTimeKind]::Utc)
             Mock Get-Date { $clock } -ParameterFilter { $AsUTC }

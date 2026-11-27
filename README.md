@@ -38,6 +38,7 @@ The action ignores labels that are not in the table.
 
 In `publish` mode during a pull request run with `WhatIf: false`, the action creates missing labels from the table.
 It sets their colors and descriptions. It leaves all other labels unchanged.
+The action completes label setup before it changes a release or tag.
 Push events do not change labels.
 
 The action publishes a prerelease for an open pull request with `release:prerelease`, or for a branch push that matches that pull request.
