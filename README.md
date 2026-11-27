@@ -137,9 +137,19 @@ The action reads the current labels and latest stable release from the target re
 If GitHub reports no latest stable release, the action uses `0.0.0` as the baseline.
 A failed read, a stale pull request, or an invalid decision fails the run without outputs.
 
-Use a separate read-only job for the [required release decision check][release-decision-check].
-Include `labeled` and `unlabeled` to check label changes. Do not use a path filter to skip the check.
-Apply `release:skip` when a change does not need a release.
+### Check a pull request
+
+This repository's `Release decision` job runs on pull requests to `main`, including forks and changes that affect only documentation.
+It checks the candidate merge commit and uses the release settings and literal inputs from the local publisher in `.github/workflows/Release.yml`.
+The publisher must check out this repository at the workspace root before it invokes the local action.
+If the workflow route or its inputs cannot be resolved, the check fails. Do not use expressions for publisher inputs that this check must evaluate.
+The default settings file is optional. If the publisher names a file, include it in the candidate checkout.
+
+The job uses read-only permissions. It checks the current labels and revisions again before it reports its decision.
+Apply `release:skip` when a change does not need a release. The job still runs and passes for a valid skip.
+The job is separate from `Action-Test` and is advisory. It does not prevent merges, and a label rerun alone does not invalidate a previous pass.
+See the [required check design][release-decision-check] for future enforcement.
+
 If a fork contribution needs publication, follow [Prerelease a fork contribution][fork-prerelease].
 
 ### Publish a version from Calculate
@@ -281,6 +291,7 @@ These outputs are available only in Calculate mode. For example, read `steps.cal
 | Name | Description |
 | --- | --- |
 | `Decision` | `release` if the version is valid. `skip` for a valid `release:skip` decision. |
+| `BumpSource` | The release label or settings layer that supplied the decision. |
 | `ReleaseVersion` | The calculated SemVer string without `VersionPrefix`. Empty for `skip`. |
 | `CalculatedAt` | The ISO 8601 UTC instant used to calculate a date-dependent prerelease. Empty for other results. |
 

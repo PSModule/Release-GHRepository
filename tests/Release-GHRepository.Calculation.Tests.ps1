@@ -187,8 +187,8 @@ Describe 'Release-GHRepository event release plans' {
 
         $result = & $runCalculation
 
-        $result.Keys.Count | Should -Be 2
         $result.Decision | Should -BeExactly 'release'
+        $result.BumpSource | Should -BeExactly 'release:minor'
         $result.ReleaseVersion | Should -BeExactly '2.1.0-featurecalc.1'
     }
 
@@ -231,13 +231,14 @@ Describe 'Release-GHRepository event release plans' {
         $plan.CalculatedAt | Should -BeExactly $timestamp
     }
 
-    It 'returns only a successful skip and does not read release history' {
+    It 'returns a successful skip without a version or a release history read' {
         $currentPullRequest.labels = @(@{ name = 'release:skip' })
 
         $result = & $runCalculation
 
-        $result.Keys.Count | Should -Be 1
         $result.Decision | Should -BeExactly 'skip'
+        $result.BumpSource | Should -BeExactly 'release:skip'
+        $result.Keys | Should -Not -Contain 'ReleaseVersion'
         Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[1] -ceq 'graphql' }
     }
 
