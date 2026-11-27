@@ -93,6 +93,20 @@ Describe 'Reading the invoked release settings' {
         { & $read '' -Workflow $workflow } | Should -Throw '*conditional*publisher*'
     }
 
+    It 'rejects a publisher that checks out a different ref' {
+        $checkout = "      - uses: actions/checkout@example`n        with:`n          ref: refs/heads/maintenance"
+        $workflow = $workflowFixture.Replace('      - uses: actions/checkout@example', $checkout)
+
+        { & $read '' -Workflow $workflow } | Should -Throw '*publisher checkout*ref*'
+    }
+
+    It 'rejects settings routed to a different repository' {
+        $checkout = "      - uses: actions/checkout@example`n        with:`n          repository: example/other"
+        $workflow = $workflowFixture.Replace('      - uses: actions/checkout@example', $checkout)
+
+        { & $read '' -Workflow $workflow } | Should -Throw '*publisher checkout*repository*'
+    }
+
     It 'rejects an unsupported input even if it is named Keys' {
         $inputs = "        with:`n          Keys: DefaultBump`n          DefaultBump: minor"
 

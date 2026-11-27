@@ -141,6 +141,7 @@ A failed read, a stale pull request, or an invalid decision fails the run withou
 
 This repository's `Release decision` job runs on pull requests to `main`, including forks and changes that affect only documentation.
 It checks the candidate merge commit and uses the release settings and literal inputs from the local publisher in `.github/workflows/Release.yml`.
+The publisher must check out this repository at the workspace root before it invokes the local action.
 If the workflow route or its inputs cannot be resolved, the check fails. Do not use expressions for publisher inputs that this check must evaluate.
 The default settings file is optional. If the publisher names a file, include it in the candidate checkout.
 

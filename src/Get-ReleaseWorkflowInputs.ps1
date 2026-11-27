@@ -64,6 +64,40 @@ if ($publisher[0].Contains('if') -or $job.Contains('strategy') -or $job.Contains
     throw 'The release check cannot resolve a conditional publisher step, publisher dependencies, or a matrix of publisher inputs.'
 }
 
+$checkouts = @(foreach ($step in $job.steps) {
+        if ([object]::ReferenceEquals($step, $publisher[0])) {
+            break
+        }
+        if ($step.uses -clike 'actions/checkout@*') {
+            $step
+        }
+    })
+if ($checkouts.Count -ne 1 -or $checkouts[0].Contains('if')) {
+    throw 'The release check requires one unconditional checkout before the local publisher.'
+}
+if ($checkouts[0].Contains('with')) {
+    $checkoutInputs = $checkouts[0].with
+    if ($checkoutInputs -isnot [System.Collections.IDictionary]) {
+        throw 'The publisher checkout with block must contain a mapping.'
+    }
+    if ($checkoutInputs.Contains('repository') -and
+        ($checkoutInputs.repository -isnot [string] -or $checkoutInputs.repository -cne '${{ github.repository }}')) {
+        throw 'The publisher checkout must use the current repository.'
+    }
+    if (($checkoutInputs.Contains('path') -and $checkoutInputs.path -cnotin @('.', './')) -or $checkoutInputs.Contains('sparse-checkout')) {
+        throw 'The publisher checkout must use the workspace root without a sparse checkout.'
+    }
+    $currentReleaseRef = @(
+        '${{ github.event.action == ''closed'' && github.event.pull_request.merged'
+        '&& github.event.pull_request.merge_commit_sha || github.event.pull_request.base.sha }}'
+    ) -join ' '
+    $supportedRefs = @('${{ github.sha }}', '${{ github.event.pull_request.merge_commit_sha }}', $currentReleaseRef)
+    if ($checkoutInputs.Contains('ref') -and
+        ($checkoutInputs.ref -isnot [string] -or ($checkoutInputs.ref.Trim() -replace '\s+', ' ') -cnotin $supportedRefs)) {
+        throw 'The publisher checkout ref must come from the pull request merge rather than another revision.'
+    }
+}
+
 $inputs = @{}
 if (-not $publisher[0].Contains('with')) {
     return $inputs

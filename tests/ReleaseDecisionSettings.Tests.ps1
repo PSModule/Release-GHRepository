@@ -27,6 +27,7 @@ jobs:
   Release:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@example
       - uses: ./
         with:
           SettingsFilePath: .github/alternate.yml
