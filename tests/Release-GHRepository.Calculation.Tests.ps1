@@ -16,7 +16,7 @@ BeforeAll {
     $action = ConvertFrom-Yaml -Yaml ([IO.File]::ReadAllText($actionPath))
     $scriptStep = $action.runs.steps | Where-Object { $_.uses -like 'PSModule/GitHub-Script@*' }
     $runAction = [scriptblock]::Create($scriptStep.with.Script)
-    $runCalculation = {
+    $runActionStep = {
         $githubEvent | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
         $null = & $bootstrapPath -OutputPath $bootstrapOutput
         $settingsRecord = Select-String -LiteralPath $bootstrapOutput -Pattern '^ReleaseSettings<<' -Context 0, 1
@@ -24,7 +24,10 @@ BeforeAll {
             throw 'The settings step did not write the release settings.'
         }
         $env:PSMODULE_AUTO_RELEASE_RESOLVED_SETTINGS = $settingsRecord.Context.PostContext[0]
-        $null = & $runAction
+        & $runAction
+    }
+    $runCalculation = {
+        $null = & $runActionStep
         (Get-GitHubOutput -AsHashtable).result
     }
     $expectFailure = {
@@ -33,12 +36,20 @@ BeforeAll {
         { & $runCalculation } | Should -Throw $Message
         [IO.File]::ReadAllText($env:GITHUB_OUTPUT) | Should -BeExactly ''
     }
+    $expectNoRepositoryWrites = {
+        Should -Invoke git -Times 0 -Exactly -ParameterFilter { $args[0] -cne 'check-ref-format' }
+        Should -Invoke gh -Times 0 -Exactly -ParameterFilter {
+            $args[0] -cin @('pr', 'label') -or
+            ($args[0] -ceq 'release' -and $args[1] -cne 'list') -or
+            ($args[0] -ceq 'api' -and ($args -ccontains 'POST' -or $args -ccontains 'PATCH' -or $args -ccontains 'DELETE'))
+        }
+    }
     $headSha = '0123456789012345678901234567890123456789'
     $mergeSha = 'fedcba9876543210fedcba9876543210fedcba98'
     $targetRepository = 'example/project'
 }
 
-Describe 'Release-GHRepository Calculate mode' {
+Describe 'Release-GHRepository event release plans' {
     BeforeEach {
         $environmentNames = @(
             'GITHUB_ACTION'
@@ -51,6 +62,8 @@ Describe 'Release-GHRepository Calculate mode' {
             'PSMODULE_AUTO_RELEASE_ACTION_PATH'
             'PSMODULE_AUTO_RELEASE_INPUT_Mode'
             'PSMODULE_AUTO_RELEASE_INPUT_PullRequest'
+            'PSMODULE_AUTO_RELEASE_INPUT_ReleaseVersion'
+            'PSMODULE_AUTO_RELEASE_INPUT_CalculatedAt'
             'PSMODULE_AUTO_RELEASE_RESOLVED_SETTINGS'
             'PSMODULE_GITHUB_SCRIPT'
         ) + @($action.inputs.Keys | ForEach-Object { "PSMODULE_AUTO_RELEASE_INPUT_$_" })
@@ -94,10 +107,19 @@ Describe 'Release-GHRepository Calculate mode' {
         $historyResponse = @{ data = @{ repository = @{ nameWithOwner = $targetRepository; latestRelease = $latest } } }
         $historyExitCode = 0
         $lookupExitCode = 0
+        $tagExitCode = 0
+        $tagReferences = @()
+        $releaseRecords = @()
+        $allowSimulatedWrites = $false
 
         # Simulate API responses so these tests need no token and cannot change a repository.
         Mock Install-PSResource {}
-        Mock git { throw 'Calculate must not run git.' }
+        Mock git {
+            if (-not $allowSimulatedWrites) {
+                throw 'Calculate must not run git.'
+            }
+            $global:LASTEXITCODE = 0
+        }
         Mock gh {
             $global:LASTEXITCODE = 0
             if ($args[0] -ceq 'api' -and $args[1] -ceq 'graphql' -and
@@ -106,7 +128,7 @@ Describe 'Release-GHRepository Calculate mode' {
                 $global:LASTEXITCODE = $historyExitCode
                 ConvertTo-Json -InputObject $historyResponse -Depth 20 -Compress
             } elseif ($args[0] -ceq 'api' -and $args -contains 'GET') {
-                switch ($args[1]) {
+                switch -Wildcard ($args[1]) {
                     "repos/$targetRepository/pulls/42" {
                         ConvertTo-Json -InputObject $currentPullRequest -Depth 20 -Compress
                     }
@@ -118,10 +140,29 @@ Describe 'Release-GHRepository Calculate mode' {
                         $global:LASTEXITCODE = $lookupExitCode
                         ConvertTo-Json -InputObject $associatedPages -Depth 20 -Compress
                     }
-                    default { throw "Unexpected Calculate read: gh $($args -join ' ')" }
+                    "repos/$targetRepository" {
+                        ConvertTo-Json -InputObject $repository -Depth 20 -Compress
+                    }
+                    "repos/$targetRepository/git/matching-refs/tags/*" {
+                        $global:LASTEXITCODE = $tagExitCode
+                        ConvertTo-Json -InputObject $tagReferences -Depth 20 -Compress
+                    }
+                    default { throw "Unexpected GitHub read: gh $($args -join ' ')" }
                 }
+            } elseif ($args[0] -ceq 'repo' -and $args[1] -ceq 'view') {
+                '{"defaultBranchRef":{"name":"trunk"}}'
+            } elseif ($args[0] -ceq 'release' -and $args[1] -ceq 'list') {
+                ConvertTo-Json -InputObject $releaseRecords -Depth 20 -Compress
+            } elseif ($allowSimulatedWrites -and $args[0] -ceq 'release' -and $args[1] -ceq 'create') {
+                'https://github.com/example/project/releases/tag/test'
+            } elseif ($allowSimulatedWrites -and (
+                    $args[0] -cin @('label', 'pr') -or
+                    ($args[0] -ceq 'release' -and $args[1] -ceq 'delete') -or
+                    ($args[0] -ceq 'api' -and $args[1] -ceq "repos/$targetRepository/git/refs" -and $args -ccontains 'POST')
+                )) {
+                return
             } else {
-                throw "Unexpected Calculate command: gh $($args -join ' ')"
+                throw "Unexpected GitHub command: gh $($args -join ' ')"
             }
         }
     }
@@ -130,8 +171,10 @@ Describe 'Release-GHRepository Calculate mode' {
         foreach ($name in $savedEnvironment.Keys) {
             [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name])
         }
-        Should -Invoke git -Times 0 -Exactly
-        Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[0] -cne 'api' }
+        if (-not $allowSimulatedWrites) {
+            Should -Invoke git -Times 0 -Exactly
+            Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[0] -cne 'api' }
+        }
     }
 
     It 'uses current PR labels for a prerelease without a publication label when WhatIf is <WhatIf>' -ForEach @(
@@ -418,5 +461,206 @@ Describe 'Release-GHRepository Calculate mode' {
         }
 
         & $expectFailure -Message $Message
+    }
+
+    Context 'Publish mode' {
+        BeforeEach {
+            $allowSimulatedWrites = $true
+            $env:PSMODULE_AUTO_RELEASE_INPUT_Mode = 'publish'
+            $currentPullRequest.labels = @(@{ name = 'release:minor' }, @{ name = 'release:prerelease' })
+            $eventPullRequest.labels = $currentPullRequest.labels
+            $releaseRecords = @($latest.Clone())
+            $releaseRecords[0].isLatest = $true
+            $githubEvent.action = 'opened'
+        }
+
+        It 'publishes the Calculate output with the configured prefix at the exact PR head' {
+            $env:PSMODULE_AUTO_RELEASE_INPUT_Mode = 'calculate'
+            $env:PSMODULE_AUTO_RELEASE_INPUT_VersionPrefix = 'product-'
+            $result = & $runCalculation
+            $result.ReleaseVersion | Should -BeExactly '2.1.0-featurecalc.1'
+            $env:PSMODULE_AUTO_RELEASE_INPUT_Mode = 'publish'
+            $env:PSMODULE_AUTO_RELEASE_INPUT_ReleaseVersion = $result.ReleaseVersion
+
+            $null = & $runActionStep
+
+            Should -Invoke gh -Times 1 -Exactly -ParameterFilter {
+                $args[0] -ceq 'release' -and $args[1] -ceq 'create' -and $args -ccontains 'product-2.1.0-featurecalc.1' -and
+                $args -ccontains '--prerelease' -and $args -ccontains $headSha -and $args -ccontains "github.com/$targetRepository"
+            }
+            Should -Invoke gh -Times 1 -Exactly -ParameterFilter {
+                $args[0] -ceq 'api' -and $args -ccontains 'POST' -and
+                $args -ccontains 'ref=refs/tags/product-2.1.0-featurecalc.1' -and $args -ccontains "sha=$headSha"
+            }
+        }
+
+        It 'calculates on demand with current PR labels when ReleaseVersion is omitted' {
+            $eventPullRequest.labels = @(@{ name = 'release:patch' })
+
+            $null = & $runActionStep
+
+            Should -Invoke gh -Times 1 -Exactly -ParameterFilter {
+                $args[0] -ceq 'release' -and $args[1] -ceq 'create' -and $args -ccontains 'v2.1.0-featurecalc.1' -and
+                $args -ccontains $headSha
+            }
+        }
+
+        It 'replays the UTC Calculate output after midnight' {
+            $clock = [datetime]::new(2026, 1, 3, 23, 59, 0, [DateTimeKind]::Utc)
+            Mock Get-Date { $clock } -ParameterFilter { $AsUTC }
+            $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = 'yyyy-MM-dd'
+            $env:PSMODULE_AUTO_RELEASE_INPUT_Mode = 'calculate'
+            $result = & $runCalculation
+            $result.ReleaseVersion | Should -BeExactly '2.1.0-featurecalc.2026-01-03.1'
+            $timestamp = [regex]::Match([IO.File]::ReadAllText($env:GITHUB_OUTPUT), '"CalculatedAt":\s*"([^"]+)"').Groups[1].Value
+            $timestamp | Should -BeExactly '2026-01-03T23:59:00.0000000Z'
+            $env:PSMODULE_AUTO_RELEASE_INPUT_Mode = 'publish'
+            $env:PSMODULE_AUTO_RELEASE_INPUT_ReleaseVersion = $result.ReleaseVersion
+            $env:PSMODULE_AUTO_RELEASE_INPUT_CalculatedAt = $timestamp
+            $clock = $clock.AddMinutes(2)
+
+            $null = & $runActionStep
+
+            Should -Invoke gh -Times 1 -Exactly -ParameterFilter {
+                $args[0] -ceq 'release' -and $args[1] -ceq 'create' -and
+                $args -ccontains 'v2.1.0-featurecalc.2026-01-03.1' -and $args -ccontains $headSha
+            }
+        }
+
+        It 'rejects <Case> before any repository writes' -ForEach @(
+            @{ Case = 'a prefixed version'; Version = 'v2.1.0-featurecalc.1'; Message = '*ReleaseVersion*unprefixed SemVer*' }
+            @{ Case = 'an invalid version'; Version = '2.1'; Message = '*ReleaseVersion*unprefixed SemVer*' }
+            @{ Case = 'a stable version on a PR'; Version = '2.1.0'; Message = '*ReleaseVersion*does not match*' }
+            @{ Case = 'a different bump'; Version = '2.0.4-featurecalc.1'; Message = '*ReleaseVersion*does not match*' }
+            @{ Case = 'changed labels'; Message = '*ReleaseVersion*does not match*' }
+            @{ Case = 'changed stable history'; Message = '*ReleaseVersion*does not match*' }
+            @{ Case = 'changed settings'; Message = '*ReleaseVersion*does not match*' }
+            @{ Case = 'a stale head'; Message = '*no longer matches*' }
+            @{ Case = 'a PR without the publication label'; Message = '*release:prerelease*' }
+            @{ Case = 'a skipped PR'; Message = '*ReleaseVersion*release:skip*' }
+            @{ Case = 'a release request on a PR close'; Message = '*ReleaseVersion*not eligible*' }
+            @{ Case = 'a release request on manual dispatch'; Message = '*ReleaseVersion*not eligible*' }
+            @{ Case = 'an exact tag at a different SHA'; Message = '*tag*v2.1.0-featurecalc.1*target*' }
+            @{ Case = 'an exact annotated tag'; Message = '*tag*v2.1.0-featurecalc.1*target*' }
+            @{ Case = 'an unreadable tag'; Message = '*read*tag*v2.1.0-featurecalc.1*' }
+            @{ Case = 'a missing date timestamp'; Message = '*CalculatedAt*required*' }
+            @{ Case = 'a non-UTC timestamp'; Message = '*CalculatedAt*UTC*' }
+        ) {
+            $env:PSMODULE_AUTO_RELEASE_INPUT_ReleaseVersion = $Version ?? '2.1.0-featurecalc.1'
+            switch ($Case) {
+                'changed labels' { $currentPullRequest.labels = @(@{ name = 'release:major' }, @{ name = 'release:prerelease' }) }
+                'changed stable history' { $latest.tagName = 'v2.1.0' }
+                'changed settings' { $env:PSMODULE_AUTO_RELEASE_INPUT_IncrementalPrerelease = 'false' }
+                'a stale head' {
+                    $currentPullRequest.head = $head.Clone()
+                    $currentPullRequest.head.sha = $mergeSha
+                }
+                'a PR without the publication label' { $currentPullRequest.labels = @(@{ name = 'release:minor' }) }
+                'a skipped PR' { $currentPullRequest.labels = @(@{ name = 'release:skip' }) }
+                'a release request on a PR close' {
+                    $githubEvent.action = 'closed'
+                    $eventPullRequest.state = 'closed'
+                    $eventPullRequest.merged = $true
+                    $eventPullRequest.merge_commit_sha = $mergeSha
+                }
+                'a release request on manual dispatch' {
+                    $env:GITHUB_EVENT_NAME = 'workflow_dispatch'
+                    $githubEvent = @{ repository = $repository }
+                }
+                'an exact tag at a different SHA' {
+                    $tagReferences = @(@{ ref = 'refs/tags/v2.1.0-featurecalc.1'; object = @{ sha = $mergeSha; type = 'commit' } })
+                }
+                'an exact annotated tag' {
+                    $tagReferences = @(@{ ref = 'refs/tags/v2.1.0-featurecalc.1'; object = @{ sha = $headSha; type = 'tag' } })
+                }
+                'an unreadable tag' { $tagExitCode = 1 }
+                'a missing date timestamp' { $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = 'yyyy-MM-dd' }
+                'a non-UTC timestamp' {
+                    $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = 'yyyy-MM-dd'
+                    $env:PSMODULE_AUTO_RELEASE_INPUT_CalculatedAt = '2026-01-03T02:05:06.0000000+01:00'
+                }
+            }
+
+            { & $runActionStep } | Should -Throw $Message
+            & $expectNoRepositoryWrites
+        }
+
+        It 'does not confuse a longer ref with the exact version tag' {
+            $env:PSMODULE_AUTO_RELEASE_INPUT_ReleaseVersion = '2.1.0-featurecalc.1'
+            $tagReferences = @(@{ ref = 'refs/tags/v2.1.0-featurecalc.10'; object = @{ sha = $mergeSha; type = 'commit' } })
+
+            $null = & $runActionStep
+
+            Should -Invoke gh -Times 1 -Exactly -ParameterFilter {
+                $args[0] -ceq 'release' -and $args[1] -ceq 'create' -and $args -ccontains 'v2.1.0-featurecalc.1'
+            }
+        }
+
+        It 'skips publication without a version and without release history' {
+            $currentPullRequest.labels = @(@{ name = 'release:skip' })
+            $historyExitCode = 1
+
+            $null = & $runActionStep
+
+            Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[0] -cin @('release', 'pr') -or $args[1] -ceq 'graphql' }
+            Should -Invoke git -Times 0 -Exactly
+            [IO.File]::ReadAllText($env:GITHUB_OUTPUT) | Should -BeExactly ''
+        }
+
+        It 'uses the exact default-branch push and its matching merged PR, not the configured bump' {
+            $env:GITHUB_EVENT_NAME = 'push'
+            $githubEvent = $defaultPush
+            $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
+            $currentPullRequest.state = 'closed'
+            $currentPullRequest.merged_at = '2026-01-03T00:00:00Z'
+            $currentPullRequest.merge_commit_sha = $mergeSha
+            $unrelated = $currentPullRequest.Clone()
+            $unrelated.number = 43
+            $unrelated.merge_commit_sha = $headSha
+            $associatedPages = , @($unrelated, $currentPullRequest)
+            $env:PSMODULE_AUTO_RELEASE_INPUT_Mode = 'calculate'
+            $result = & $runCalculation
+            $result.ReleaseVersion | Should -BeExactly '2.1.0'
+            $env:PSMODULE_AUTO_RELEASE_INPUT_Mode = 'publish'
+            $env:PSMODULE_AUTO_RELEASE_INPUT_ReleaseVersion = $result.ReleaseVersion
+
+            $null = & $runActionStep
+
+            Should -Invoke gh -Times 1 -Exactly -ParameterFilter {
+                $args[0] -ceq 'release' -and $args[1] -ceq 'create' -and $args -ccontains 'v2.1.0' -and
+                $args -ccontains $mergeSha -and $args -cnotcontains '--prerelease'
+            }
+            Should -Invoke gh -Times 0 -Exactly -ParameterFilter { $args[0] -cin @('label', 'pr') }
+        }
+
+        It 'uses a configured bump for a direct push and honors WhatIf' {
+            $env:GITHUB_EVENT_NAME = 'push'
+            $githubEvent = $defaultPush
+            $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
+            $env:PSMODULE_AUTO_RELEASE_INPUT_WhatIf = 'true'
+
+            $output = (& $runActionStep) -join "`n"
+
+            $output | Should -Match "release create v2\.0\.4 .+--target $mergeSha"
+            & $expectNoRepositoryWrites
+        }
+
+        It 'does not publish a stable release on a merged PR close but still cleans its prerelease' {
+            $githubEvent.action = 'closed'
+            $eventPullRequest.state = 'closed'
+            $eventPullRequest.merged = $true
+            $eventPullRequest.merge_commit_sha = $mergeSha
+            $releaseRecords += @{ tagName = 'v2.1.0-featurecalc.1'; isPrerelease = $true }
+
+            $null = & $runActionStep
+
+            Should -Invoke gh -Times 1 -Exactly -ParameterFilter {
+                $args[0] -ceq 'release' -and $args[1] -ceq 'delete' -and $args -ccontains 'v2.1.0-featurecalc.1'
+            }
+            Should -Invoke gh -Times 0 -Exactly -ParameterFilter {
+                $args[0] -ceq 'release' -and $args[1] -ceq 'create'
+            }
+            Should -Invoke git -Times 0 -Exactly
+        }
     }
 }
