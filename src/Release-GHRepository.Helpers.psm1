@@ -743,12 +743,131 @@ function Test-PrereleaseCreation {
     $ReleaseDecision.Prerelease -and -not $ReleaseDecision.Skip -and -not $PullRequestClosed
 }
 
+function Get-ReleaseVersionPlan {
+    <#
+        .SYNOPSIS
+        Calculate a release version without changing repository state.
+
+        .DESCRIPTION
+        Apply the resolved bump to the stable baseline, or to 0.0.0 when
+        there is no baseline. Use the same version rules for publication and
+        calculation. Return a skip decision without a version.
+
+        .EXAMPLE
+        Get-ReleaseVersionPlan -ReleaseDecision $decision -Settings $settings -BaselineTag 'v2.0.3'
+
+        Return the unprefixed version and the version object for its tag.
+
+        .INPUTS
+        None
+
+        You can't pipe objects to Get-ReleaseVersionPlan.
+
+        .OUTPUTS
+        System.Management.Automation.PSCustomObject
+
+        The decision, unprefixed version, tag version, and applicable UTC instant.
+    #>
+    [OutputType([PSCustomObject])]
+    [CmdletBinding()]
+    param(
+        # The validated release decision, including the bump or skip.
+        [Parameter(Mandatory)]
+        [PSCustomObject] $ReleaseDecision,
+
+        # The resolved settings for version prefixes and prerelease suffixes.
+        [Parameter(Mandatory)]
+        [PSCustomObject] $Settings,
+
+        # The latest stable release tag. Omit it only when no stable release exists.
+        [Parameter()]
+        [AllowEmptyString()]
+        [string] $BaselineTag = '',
+
+        # The normalized branch identifier. Omit it to calculate a stable version.
+        [Parameter()]
+        [AllowEmptyString()]
+        [string] $PrereleaseName = '',
+
+        # The instant to use for date-dependent prereleases.
+        [Parameter()]
+        [datetime] $CalculationTime = [datetime]::UtcNow,
+
+        # Preserve the local date format and PSSemVer behavior of the original publisher.
+        [Parameter()]
+        [switch] $Legacy
+    )
+
+    if ($ReleaseDecision.Skip) {
+        [PSCustomObject]@{ Decision = 'skip'; ReleaseVersion = $null; TagVersion = $null; CalculatedAt = $null }
+        return
+    }
+
+    $baseline = $BaselineTag
+    $versionPrefix = [string] $Settings.VersionPrefix
+    if (-not $Legacy -and $baseline) {
+        if ($versionPrefix -and $baseline.StartsWith($versionPrefix, [StringComparison]::Ordinal) -and
+            $baseline.Substring($versionPrefix.Length) -cmatch '\A[0-9]') {
+            $baseline = $baseline.Substring($versionPrefix.Length)
+        } else {
+            $baseline = $baseline -creplace '\A[A-Za-z]+'
+        }
+        $parsed = $null
+        if (-not [semver]::TryParse($baseline, [ref] $parsed) -or $parsed.PrereleaseLabel -or
+            $parsed.ToString() -cne $baseline) {
+            throw "Invalid release baseline [$BaselineTag]. Use a stable SemVer release tag."
+        }
+    }
+    $version = New-PSSemVer -Version $baseline
+    $version.Prefix = $versionPrefix
+    switch ($ReleaseDecision.Bump) {
+        'Major' { $version.BumpMajor() }
+        'Minor' { $version.BumpMinor() }
+        'Patch' { $version.BumpPatch() }
+        default { throw "Cannot calculate a version for release bump [$($ReleaseDecision.Bump)]." }
+    }
+
+    $calculatedAt = $null
+    if ($PrereleaseName) {
+        $version.Prerelease = $PrereleaseName
+        if ($Settings.DatePrereleaseFormat) {
+            $culture = [cultureinfo]::InvariantCulture
+            if ($Legacy) {
+                $culture = [cultureinfo]::CurrentCulture
+            } else {
+                $CalculationTime = $CalculationTime.ToUniversalTime()
+            }
+            $date = $CalculationTime.ToString($Settings.DatePrereleaseFormat, $culture)
+            $version.Prerelease += ".$date"
+            $calculatedAt = $CalculationTime.ToUniversalTime().ToString('o', [cultureinfo]::InvariantCulture)
+        }
+        if ($Settings.IncrementalPrerelease) {
+            $version.BumpPrereleaseNumber()
+        }
+    }
+
+    $releaseVersion = $version.ToString().Substring($versionPrefix.Length)
+    if (-not $Legacy) {
+        $parsed = $null
+        if (-not [semver]::TryParse($releaseVersion, [ref] $parsed) -or $parsed.ToString() -cne $releaseVersion) {
+            throw "The calculated version [$releaseVersion] is not valid SemVer."
+        }
+    }
+    [PSCustomObject]@{
+        Decision       = 'release'
+        ReleaseVersion = $releaseVersion
+        TagVersion     = $version
+        CalculatedAt   = $calculatedAt
+    }
+}
+
 Export-ModuleMember -Function @(
     'ConvertTo-ReleaseBump'
     'ConvertTo-ReleaseSettingValue'
     'Get-PrereleaseCleanupCandidate'
     'Get-ReleaseLabelDefinition'
     'Get-ReleaseSettingSchema'
+    'Get-ReleaseVersionPlan'
     'Resolve-ReleaseDecision'
     'Resolve-ReleaseConfiguration'
     'Resolve-ReleaseFileSystemPath'

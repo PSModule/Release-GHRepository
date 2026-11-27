@@ -230,40 +230,17 @@ Write-Output '-------------------------------------------------'
 
 if (-not $releaseDecision.Skip -and ($createPrerelease -or $createRelease -or $whatIf)) {
     LogGroup 'Calculate new version' {
-        $latestVersion = New-PSSemVer -Version $latestVersion
-        $newVersion = New-PSSemVer -Version $latestVersion
-        $newVersion.Prefix = $versionPrefix
-        if ($majorRelease) {
-            Write-Output 'Incrementing major version.'
-            $newVersion.BumpMajor()
-        } elseif ($minorRelease) {
-            Write-Output 'Incrementing minor version.'
-            $newVersion.BumpMinor()
-        } elseif ($patchRelease) {
-            Write-Output 'Incrementing patch version.'
-            $newVersion.BumpPatch()
-        } else {
-            Write-Output 'Skipping release creation, exiting.'
-            return
+        $planParameters = @{
+            ReleaseDecision = $releaseDecision
+            Settings        = $releaseSettings
+            BaselineTag     = $latestVersion
+            CalculationTime = Get-Date
+            Legacy          = $true
         }
-
-        Write-Output "Partial new version: [$newVersion]"
-
         if ($createPrerelease) {
-            Write-Output "Adding a prerelease tag to the version using the branch name [$prereleaseName]."
-            $newVersion.Prerelease = $prereleaseName
-            Write-Output "Partial new version: [$newVersion]"
-
-            if (![string]::IsNullOrEmpty($datePrereleaseFormat)) {
-                Write-Output "Using date-based prerelease: [$datePrereleaseFormat]."
-                $newVersion.Prerelease += ".$(Get-Date -Format $datePrereleaseFormat)"
-                Write-Output "Partial new version: [$newVersion]"
-            }
-
-            if ($incrementalPrerelease) {
-                $newVersion.BumpPrereleaseNumber()
-            }
+            $planParameters.PrereleaseName = $prereleaseName
         }
+        $newVersion = (Get-ReleaseVersionPlan @planParameters).TagVersion
     }
     Write-Output '-------------------------------------------------'
     Write-Output "New version:                    [$newVersion]"
