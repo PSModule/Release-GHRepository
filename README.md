@@ -38,19 +38,20 @@ The action ignores labels that are not in the table.
 
 In `publish` mode during a pull request run with `WhatIf: false`, the action creates missing labels from the table.
 It sets their colors and descriptions. It leaves all other labels unchanged.
-If the event has no pull request, the action does not change labels or publish a release.
+Push events do not change labels.
 
-The action publishes a prerelease for an open pull request with `release:prerelease`.
-The prerelease name uses the head branch name. When the tag does not exist, the action creates it at the exact pull request head commit.
+The action publishes a prerelease for an open pull request with `release:prerelease`, or for a branch push that matches that pull request.
+The prerelease name uses the head branch name. The version tag points to the exact pull request head commit.
 
-A publishing run creates a stable release on a merge into the default branch unless the pull request has `release:skip`.
-The version tag points to the merge commit. For a squash merge, this is the squash commit.
-The action does not move an existing version tag. After publication, it sets each enabled major or minor tag to the same commit.
+Only a push to the default branch can publish a stable release. The version tag points to the exact pushed commit.
+If a pull request merged into the default branch at that commit, the action uses its current labels.
+For a direct push without a matching pull request, set `DefaultBump` to `patch`, `minor`, or `major`.
+The action does not move an existing stable version tag. After publication, it sets each enabled major or minor tag to the same commit.
 
 By default, the release notes start with the pull request title and number, followed by the full pull request description.
 Put release-specific upgrade instructions in that description.
 
-If `AutoCleanup` is `true`, the action deletes matching prereleases and their tags when the pull request closes.
+When the pull request closes, Publish does not create a release. If `AutoCleanup` is `true`, it deletes matching prereleases and their tags.
 The `release:skip` label does not prevent cleanup.
 
 For cleanup, the action finds the version number after `VersionPrefix`. It then matches the exact, case-sensitive identifier for the head branch.
@@ -60,7 +61,7 @@ The action uses [GitHub-Script](https://github.com/PSModule/GitHub-Script), whic
 
 ## Usage
 
-This example shows the publishing job.
+This example shows the prerelease and cleanup job. It does not publish stable releases.
 
 ```yaml
 name: Release-GHRepository
@@ -90,17 +91,10 @@ jobs:
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-24.04
     steps:
-      - name: Require the merge commit SHA
-        if: ${{ github.event.action == 'closed' && github.event.pull_request.merged && !github.event.pull_request.merge_commit_sha }}
-        shell: pwsh
-        run: throw 'GitHub did not report the merge commit SHA.'
-
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: >-
-            ${{ github.event.action == 'closed' && github.event.pull_request.merged
-            && github.event.pull_request.merge_commit_sha || github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
 
       - name: Release repository
@@ -111,8 +105,7 @@ Pin the action to the full commit SHA of a published release that supports these
 Do not use a pull request head in a production workflow.
 Use a moving major tag only if the producer's release automation controls it and moves it only to compatible stable releases in that major version.
 
-The example uses `pull_request`. The publishing job skips pull requests from forks, including on merge.
-For a merge, it checks out the exact merge commit. For other events, it checks out the base commit, not the pull request head.
+The publishing job skips pull requests from forks. It checks out the base commit, not the pull request head.
 
 ### Calculate a version
 
@@ -149,23 +142,67 @@ Include `labeled` and `unlabeled` to check label changes. Do not use a path filt
 Apply `release:skip` when a change does not need a release.
 If a fork contribution needs publication, follow [Prerelease a fork contribution][fork-prerelease].
 
+### Publish a version from Calculate
+
+Use the Calculate outputs from the same GitHub event and commit. Use the same version settings in both steps.
+Pass `ReleaseVersion` without the tag prefix. If Calculate returns `CalculatedAt`, pass it unchanged.
+Publish checks the current labels, stable release history, version settings, and target commit before it writes to GitHub.
+It rejects a stale or invalid version, a conflicting tag, and a supplied version when the event cannot publish.
+It does not replace a rejected value with a new version.
+
+On an open pull request with `release:prerelease`, use these steps to preview the handoff without changing GitHub:
+
+```yaml
+- name: Calculate the prerelease version
+  id: calculate
+  uses: PSModule/Release-GHRepository@<released-commit-sha>
+  with:
+    Mode: calculate
+
+- name: Preview the exact prerelease
+  if: ${{ steps.calculate.outputs.Decision == 'release' }}
+  uses: PSModule/Release-GHRepository@<released-commit-sha>
+  with:
+    Mode: publish
+    ReleaseVersion: ${{ steps.calculate.outputs.ReleaseVersion }}
+    CalculatedAt: ${{ steps.calculate.outputs.CalculatedAt }}
+    WhatIf: true
+```
+
+In another job of the same workflow run, expose both step outputs as job outputs and pass them through `needs`.
+If you do not need a separate Calculate step, omit both inputs. Publish calculates a version only when the event can publish:
+
+```yaml
+- name: Preview a prerelease with automatic version selection
+  uses: PSModule/Release-GHRepository@<released-commit-sha>
+  with:
+    Mode: publish
+    WhatIf: true
+```
+
+For a stable release, calculate and publish from the same default-branch push. Do not pass a prerelease version to that run.
+Before you adopt this version, update any workflow that publishes stable releases on a pull request close.
+This action change does not install a push trigger. Track the production transition in [#108][push-rollout].
+
 ## Inputs
 
-`SettingsFilePath` selects the settings file. For the other inputs, a file value overrides the default.
+`SettingsFilePath` selects the settings file. For inputs that are also settings, a file value overrides the default.
 A nonempty input overrides the file value, even if the input equals the default. For Boolean settings, `false` overrides the file value.
 If you omit an input or supply `null` or an empty string, the action keeps the file value.
 
 | Name | Description | Effective default | Required |
 | --- | --- | --- | --- |
-| `Mode` | Use `calculate` for a read-only version or `publish` for the existing pull request publication workflow. | `publish` | false |
-| `PullRequest` | Select a pull request as `OWNER/REPO#NUMBER` for a branch push in Calculate mode. | `''` | false |
+| `Mode` | Use `calculate` for a read-only version or `publish` to create the release. | `publish` | false |
+| `PullRequest` | Select a pull request as `OWNER/REPO#NUMBER` for a branch push. Publish must run in the target repository. | `''` | false |
+| `ReleaseVersion` | Use the exact unprefixed version from Calculate. Omit it to calculate the version during Publish. | `''` | false |
+| `CalculatedAt` | Pass the unchanged ISO 8601 UTC Calculate output with `ReleaseVersion` for a date-dependent prerelease. | `''` | false |
 | `AutoCleanup` | Delete prereleases after the pull request closes. | `true` | false |
 | `SettingsFilePath` | Select the repository settings file before startup. | `.github\auto-release.yml` | false |
 | `DefaultBump` | Select the bump when no bump or skip label exists. Accepts exactly `none`, `patch`, `minor`, or `major` with case-sensitive matching. | `none` | false |
 | `CreateMajorTag` | Create or update the floating major tag after a stable release. | `true` | false |
 | `CreateMinorTag` | Create or update the floating minor tag after a stable release. | `true` | false |
 | `DatePrereleaseFormat` | Append a [.NET date and time format](https://learn.microsoft.com/en-us/dotnet/standard/base-types/standard-date-and-time-format-strings) to prerelease versions. | `''` | false |
-| `IncrementalPrerelease` | Enable prerelease numbering. When false, replace a release that has the same calculated prerelease tag. | `true` | false |
+| `IncrementalPrerelease` | Enable prerelease numbering. When false, replace a release at the same prerelease tag. A supplied `ReleaseVersion` cannot move that tag to a different commit. | `true` | false |
 | `UsePRTitleAsReleaseName` | Use the pull-request title as the GitHub Release name. | `false` | false |
 | `UsePRBodyAsReleaseNotes` | Use the pull-request body as release notes. | `true` | false |
 | `UsePRTitleAsNotesHeading` | Add the pull-request title and number as the release-notes heading. | `true` | false |
@@ -193,7 +230,8 @@ File selection and execution follow this order:
 3. The action reads the file once. If the file specifies a relative `WorkingDirectory`, the action resolves it from `github.workspace`, not from the file's directory.
 4. The action applies the defaults from `action.yml`, then the file values, then nonempty inputs. It runs in the resulting `WorkingDirectory` without selecting another settings file.
 
-Use the input names in the table as YAML keys, except `SettingsFilePath`. The file must contain a YAML mapping.
+Use the input names in the table as YAML keys, except `SettingsFilePath`, `ReleaseVersion`, and `CalculatedAt`.
+The file must contain a YAML mapping.
 The action checks the defaults, the file values, and all nonempty inputs before GitHub-Script starts.
 It rejects unknown keys, null file values, and invalid values, even if a later input would override them.
 Each specified working directory must exist.
@@ -274,5 +312,6 @@ The caller job runs the composite action with `WhatIf: true`. These checks do no
 [automation-labels]: https://msx.no/docs/Ways-of-Working/Automation-Labels/#namespacing
 [release-decision-check]: https://msx.no/docs/Capabilities/release-management/design/#required-pre-merge-decision-check
 [fork-prerelease]: https://msx.no/docs/Capabilities/release-management/design/#prerelease-a-fork-contribution
+[push-rollout]: https://github.com/PSModule/Release-GHRepository/issues/108
 [consumer-upgrades]: https://msx.no/docs/Ways-of-Working/Consumer-Upgrades/
 [release-notes]: https://github.com/PSModule/Release-GHRepository/releases
