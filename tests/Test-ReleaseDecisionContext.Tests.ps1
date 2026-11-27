@@ -148,6 +148,9 @@ Describe 'Checking the release decision snapshot' {
             GITHUB_WORKSPACE                      = $workspace
             PSMODULE_AUTO_RELEASE_CHECK_PUBLISHER = 'true'
             PSMODULE_GITHUB_SCRIPT                = 'true'
+            RELEASE_BUMP_SOURCE                   = ''
+            RELEASE_DECISION                      = ''
+            RELEASE_VERSION                       = ''
         }
         $savedEnvironment = @{}
         foreach ($name in $checkEnvironment.Keys) {
@@ -163,18 +166,31 @@ Describe 'Checking the release decision snapshot' {
             ConvertTo-Json -Depth 8 -InputObject $current
         }
 
+        Push-Location -LiteralPath $actionDirectory
         try {
             $bootstrap = Join-Path -Path $actionDirectory -ChildPath 'src\Initialize-ReleaseConfiguration.ps1'
             $main = Join-Path -Path $actionDirectory -ChildPath 'src\main.ps1'
+            $workflowPath = Join-Path -Path $actionDirectory -ChildPath '.github\workflows\Release-Decision.yml'
+            $workflow = ConvertFrom-Yaml -Yaml ([IO.File]::ReadAllText($workflowPath))
+            $steps = $workflow.jobs.ReleaseDecision.steps
+            $verify = [scriptblock]::Create(($steps | Where-Object name -EQ 'Verify the pull request snapshot').run)
+            $report = [scriptblock]::Create(($steps | Where-Object name -EQ 'Recheck and report the decision').run)
+            $null = & $verify
             $settings = & $bootstrap -WorkspacePath $workspace -OutputPath '' -PublisherBranch main
             $null = & $main -Settings $settings
             $result = (Get-GitHubOutput -AsHashtable).result
+            $env:RELEASE_DECISION = $result.Decision
+            $env:RELEASE_BUMP_SOURCE = $result.BumpSource
+            $env:RELEASE_VERSION = $result.ReleaseVersion
+            $checked = & $report | ConvertFrom-Json
 
-            $result.Decision | Should -BeExactly 'skip'
-            $result.BumpSource | Should -BeExactly 'release:skip'
+            $checked.Decision | Should -BeExactly 'skip'
+            $checked.BumpSource | Should -BeExactly 'release:skip'
+            $checked.MergeSha | Should -BeExactly $mergeSha
             $result.Keys | Should -Not -Contain 'ReleaseVersion'
-            Should -Invoke gh -Times 1 -Exactly
+            Should -Invoke gh -Times 3 -Exactly
         } finally {
+            Pop-Location
             foreach ($name in $savedEnvironment.Keys) {
                 [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name])
             }
