@@ -47,7 +47,8 @@ function Get-ReleaseSettingSchema {
         throw 'The action release standards must be a mapping of setting definitions.'
     }
     $validTypes = @('Boolean', 'Text', 'Bump', 'DateTimeFormat', 'VersionConstraint', 'DirectoryPath', 'ReleaseMode', 'PullRequestSelector')
-    $settingNames = @($actionDefinition.inputs.Keys | Where-Object { $_ -ne 'SettingsFilePath' })
+    $runtimeInputs = @('SettingsFilePath', 'ReleaseVersion', 'CalculatedAt')
+    $settingNames = @($actionDefinition.inputs.Keys | Where-Object { $_ -notin $runtimeInputs })
     foreach ($name in $settingNames) {
         if ($metadata.Keys -notcontains $name) {
             throw "Release standard defaults are missing required setting [$name]."
@@ -348,9 +349,6 @@ function Resolve-ReleaseConfiguration {
     }
 
     $null = ConvertTo-ReleaseBump -DefaultBump $settings.DefaultBump
-    if ($settings.PullRequest -and $settings.Mode -cne 'calculate') {
-        throw 'PullRequest requires Mode: calculate.'
-    }
     $settings.DefaultBumpSource = $defaultBumpSource
     [PSCustomObject] $settings
 }
@@ -805,11 +803,7 @@ function Get-ReleaseVersionPlan {
 
         # The instant to use for date-dependent prereleases.
         [Parameter()]
-        [datetime] $CalculationTime = [datetime]::UtcNow,
-
-        # Preserve the local date format and PSSemVer behavior of the original publisher.
-        [Parameter()]
-        [switch] $Legacy
+        [datetime] $CalculationTime = [datetime]::UtcNow
     )
 
     if ($ReleaseDecision.Skip) {
@@ -819,7 +813,7 @@ function Get-ReleaseVersionPlan {
 
     $baseline = $BaselineTag
     $versionPrefix = [string] $Settings.VersionPrefix
-    if (-not $Legacy -and $baseline) {
+    if ($baseline) {
         $baselineCandidates = @(
             if ($versionPrefix -and $BaselineTag.StartsWith($versionPrefix, [StringComparison]::Ordinal)) {
                 $BaselineTag.Substring($versionPrefix.Length)
@@ -852,15 +846,10 @@ function Get-ReleaseVersionPlan {
     if ($PrereleaseName) {
         $version.Prerelease = $PrereleaseName
         if ($Settings.DatePrereleaseFormat) {
-            $culture = [cultureinfo]::InvariantCulture
-            if ($Legacy) {
-                $culture = [cultureinfo]::CurrentCulture
-            } else {
-                $CalculationTime = $CalculationTime.ToUniversalTime()
-            }
-            $date = $CalculationTime.ToString($Settings.DatePrereleaseFormat, $culture)
+            $CalculationTime = $CalculationTime.ToUniversalTime()
+            $date = $CalculationTime.ToString($Settings.DatePrereleaseFormat, [cultureinfo]::InvariantCulture)
             $version.Prerelease += ".$date"
-            $calculatedAt = $CalculationTime.ToUniversalTime().ToString('o', [cultureinfo]::InvariantCulture)
+            $calculatedAt = $CalculationTime.ToString('o', [cultureinfo]::InvariantCulture)
         }
         if ($Settings.IncrementalPrerelease) {
             $version.BumpPrereleaseNumber()
@@ -868,11 +857,9 @@ function Get-ReleaseVersionPlan {
     }
 
     $releaseVersion = $version.ToString().Substring($versionPrefix.Length)
-    if (-not $Legacy) {
-        $parsed = $null
-        if (-not [semver]::TryParse($releaseVersion, [ref] $parsed) -or $parsed.ToString() -cne $releaseVersion) {
-            throw "The calculated version [$releaseVersion] is not valid SemVer."
-        }
+    $parsed = $null
+    if (-not [semver]::TryParse($releaseVersion, [ref] $parsed) -or $parsed.ToString() -cne $releaseVersion) {
+        throw "The calculated version [$releaseVersion] is not valid SemVer."
     }
     [PSCustomObject]@{
         Decision       = 'release'

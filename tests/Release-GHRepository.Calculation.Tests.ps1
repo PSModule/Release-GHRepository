@@ -18,6 +18,7 @@ BeforeAll {
     $runAction = [scriptblock]::Create($scriptStep.with.Script)
     $runActionStep = {
         $githubEvent | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $env:GITHUB_EVENT_PATH
+        [IO.File]::WriteAllText($bootstrapOutput, '')
         $null = & $bootstrapPath -OutputPath $bootstrapOutput
         $settingsRecord = Select-String -LiteralPath $bootstrapOutput -Pattern '^ReleaseSettings<<' -Context 0, 1
         if (-not $settingsRecord.Context.PostContext) {
@@ -107,6 +108,7 @@ Describe 'Release-GHRepository event release plans' {
         $historyResponse = @{ data = @{ repository = @{ nameWithOwner = $targetRepository; latestRelease = $latest } } }
         $historyExitCode = 0
         $lookupExitCode = 0
+        $liveDefaultBranch = 'trunk'
         $tagExitCode = 0
         $tagReferences = @()
         $releaseRecords = @()
@@ -141,7 +143,7 @@ Describe 'Release-GHRepository event release plans' {
                         ConvertTo-Json -InputObject $associatedPages -Depth 20 -Compress
                     }
                     "repos/$targetRepository" {
-                        ConvertTo-Json -InputObject $repository -Depth 20 -Compress
+                        @{ full_name = $targetRepository; default_branch = $liveDefaultBranch } | ConvertTo-Json -Compress
                     }
                     "repos/$targetRepository/git/matching-refs/tags/*" {
                         $global:LASTEXITCODE = $tagExitCode
@@ -543,6 +545,7 @@ Describe 'Release-GHRepository event release plans' {
             @{ Case = 'an exact tag at a different SHA'; Message = '*tag*v2.1.0-featurecalc.1*target*' }
             @{ Case = 'an exact annotated tag'; Message = '*tag*v2.1.0-featurecalc.1*target*' }
             @{ Case = 'an unreadable tag'; Message = '*read*tag*v2.1.0-featurecalc.1*' }
+            @{ Case = 'a malformed tag result'; Message = '*invalid reference*release tag*' }
             @{ Case = 'a missing date timestamp'; Message = '*CalculatedAt*required*' }
             @{ Case = 'a non-UTC timestamp'; Message = '*CalculatedAt*UTC*' }
         ) {
@@ -574,6 +577,7 @@ Describe 'Release-GHRepository event release plans' {
                     $tagReferences = @(@{ ref = 'refs/tags/v2.1.0-featurecalc.1'; object = @{ sha = $headSha; type = 'tag' } })
                 }
                 'an unreadable tag' { $tagExitCode = 1 }
+                'a malformed tag result' { $tagReferences = @(@{ object = @{ sha = $headSha; type = 'commit' } }) }
                 'a missing date timestamp' { $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = 'yyyy-MM-dd' }
                 'a non-UTC timestamp' {
                     $env:PSMODULE_AUTO_RELEASE_INPUT_DatePrereleaseFormat = 'yyyy-MM-dd'
@@ -593,6 +597,38 @@ Describe 'Release-GHRepository event release plans' {
 
             Should -Invoke gh -Times 1 -Exactly -ParameterFilter {
                 $args[0] -ceq 'release' -and $args[1] -ceq 'create' -and $args -ccontains 'v2.1.0-featurecalc.1'
+            }
+        }
+
+        It 'enforces the target when replacing an unnumbered prerelease: <Case>' -ForEach @(
+            @{ Case = 'same target with exact input'; Supplied = $true; SameTarget = $true }
+            @{ Case = 'different target without exact input'; Supplied = $false; SameTarget = $false }
+            @{ Case = 'different target with exact input'; Supplied = $true; SameTarget = $false }
+        ) {
+            $env:PSMODULE_AUTO_RELEASE_INPUT_IncrementalPrerelease = 'false'
+            if ($Supplied) {
+                $env:PSMODULE_AUTO_RELEASE_INPUT_ReleaseVersion = '2.1.0-featurecalc'
+            }
+            $tag = 'v2.1.0-featurecalc'
+            $existingSha = if ($SameTarget) { $headSha } else { $mergeSha }
+            $tagReferences = @(@{ ref = "refs/tags/$tag"; object = @{ sha = $existingSha; type = 'commit' } })
+            $releaseRecords += @{ tagName = $tag; isPrerelease = $true; isDraft = $false }
+
+            if ($Supplied -and -not $SameTarget) {
+                { & $runActionStep } | Should -Throw '*Release tag*v2.1.0-featurecalc*validated target*'
+                & $expectNoRepositoryWrites
+                return
+            }
+
+            $null = & $runActionStep
+
+            Should -Invoke gh -Times 1 -Exactly -ParameterFilter {
+                $args[0] -ceq 'release' -and $args[1] -ceq 'delete' -and $args -ccontains $tag -and
+                ($args -ccontains '--cleanup-tag') -eq (-not $SameTarget)
+            }
+            Should -Invoke gh -Times 1 -Exactly -ParameterFilter {
+                $args[0] -ceq 'release' -and $args[1] -ceq 'create' -and $args -ccontains $tag -and
+                $args -ccontains '--verify-tag' -and $args -ccontains $headSha
             }
         }
 
@@ -642,6 +678,33 @@ Describe 'Release-GHRepository event release plans' {
             $output = (& $runActionStep) -join "`n"
 
             $output | Should -Match "release create v2\.0\.4 .+--target $mergeSha"
+            & $expectNoRepositoryWrites
+        }
+
+        It 'rejects <Case> for a push before any repository writes' -ForEach @(
+            @{ Case = 'a prerelease on a default-branch push'; Message = '*ReleaseVersion*does not match*' }
+            @{ Case = 'a changed default branch'; Message = '*no longer matches the repository default branch*' }
+            @{ Case = 'a direct push without a default bump'; Message = '*No release bump*' }
+            @{ Case = 'a version on a push with no open PR'; Message = '*ReleaseVersion*not eligible*' }
+        ) {
+            $env:GITHUB_EVENT_NAME = 'push'
+            $githubEvent = $defaultPush
+            $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'patch'
+            $env:PSMODULE_AUTO_RELEASE_INPUT_ReleaseVersion = '2.0.4'
+            switch ($Case) {
+                'a prerelease on a default-branch push' { $env:PSMODULE_AUTO_RELEASE_INPUT_ReleaseVersion = '2.0.4-featurecalc.1' }
+                'a changed default branch' { $liveDefaultBranch = 'renamed' }
+                'a direct push without a default bump' {
+                    $env:PSMODULE_AUTO_RELEASE_INPUT_DefaultBump = 'none'
+                    $env:PSMODULE_AUTO_RELEASE_INPUT_ReleaseVersion = $null
+                }
+                'a version on a push with no open PR' {
+                    $githubEvent = $push
+                    $openPages = , @()
+                }
+            }
+
+            { & $runActionStep } | Should -Throw $Message
             & $expectNoRepositoryWrites
         }
 
