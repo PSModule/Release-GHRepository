@@ -116,6 +116,9 @@ outputs:
   Decision:
     description: The Calculate decision, release or skip.
     value: ${{ fromJSON(steps.release.outputs.result || '{}').Decision }}
+  BumpSource:
+    description: The release label or settings layer that supplied the Calculate decision.
+    value: ${{ fromJSON(steps.release.outputs.result || '{}').BumpSource }}
   ReleaseVersion:
     description: The unprefixed semantic version. Empty for skip.
     value: ${{ fromJSON(steps.release.outputs.result || '{}').ReleaseVersion }}
@@ -171,7 +174,15 @@ runs:
         PSMODULE_AUTO_RELEASE_INPUT_Version: ${{ inputs.Version }}
         PSMODULE_AUTO_RELEASE_INPUT_Prerelease: ${{ inputs.Prerelease }}
       run: |
-        $null = & (Join-Path -Path $env:PSMODULE_AUTO_RELEASE_ACTION_PATH -ChildPath 'src\Initialize-ReleaseConfiguration.ps1')
+        $configuration = @{}
+        if ($env:PSMODULE_AUTO_RELEASE_CHECK_PUBLISHER -ceq 'true') {
+          if ($env:PSMODULE_AUTO_RELEASE_INPUT_Mode -cne 'calculate') {
+            throw 'Publisher settings can only be evaluated in Calculate mode.'
+          }
+          $configuration.PublisherBranch = $env:GITHUB_BASE_REF
+        }
+        $bootstrap = Join-Path -Path $env:PSMODULE_AUTO_RELEASE_ACTION_PATH -ChildPath 'src\Initialize-ReleaseConfiguration.ps1'
+        $null = & $bootstrap @configuration
 
     - name: Release-GHRepository
       id: release

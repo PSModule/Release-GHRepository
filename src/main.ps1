@@ -89,7 +89,12 @@ LogGroup 'Loading libraries' {
 
 if ($Settings.Mode -ceq 'calculate') {
     $plan = & $planPath @planParameters
+    if ($env:PSMODULE_AUTO_RELEASE_CHECK_PUBLISHER -ceq 'true') {
+        $contextCheck = Join-Path -Path $PSScriptRoot -ChildPath 'Test-ReleaseDecisionContext.ps1'
+        $null = & $contextCheck -CurrentPullRequest $plan.PullRequest
+    }
     Set-GitHubOutput -Name Decision -Value $plan.Decision
+    Set-GitHubOutput -Name BumpSource -Value $plan.ReleaseDecision.BumpSource
     if ($plan.Decision -ceq 'release') {
         Set-GitHubOutput -Name ReleaseVersion -Value $plan.ReleaseVersion
         if ($plan.CalculatedAt) {
